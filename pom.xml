@@ -54,6 +54,14 @@
                     </archive>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <configuration>
+                    <mainClass>com.agent.Main</mainClass>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>
