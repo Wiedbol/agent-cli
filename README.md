@@ -33,6 +33,7 @@ agent-cli/
     └── test/java/com/agent/
         ├── AgentTest.java
         └── tool/
+            ├── FileToolsDemoTest.java
             ├── IgnoreRulesTest.java
             ├── ListFilesToolTest.java
             ├── ReadFileToolTest.java
@@ -124,16 +125,27 @@ java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO   # 列文�
 java -cp target/classes com.agent.tool.FileToolsDemo --tree           # 树形列出项目文件
 ```
 
-Demo 入口会把标准输出固定为 UTF-8（见 `FileToolsDemo.useUtf8Stdout()`），因为 Windows 上
-JDK 19+ 的 `stdout.encoding` 默认跟随控制台代码页（简体中文环境通常是 GBK），会导致「Java 按
-GBK 写、终端按 UTF-8 读」的中文乱码。固定为 UTF-8 后，Windows Terminal / PowerShell 7 /
-VS Code / IDEA / macOS / Linux 都能正常显示。
+Demo 的输出编码会**按运行环境自适应**（见 `FileToolsDemo.configureStdout()`）：Windows 上
+JDK 19+ 的 `stdout.encoding` 跟随控制台代码页（简体中文环境通常是 GBK），只要「写出的字节」与
+「终端解码的方式」不一致，中文就会乱码，而写死任何一种编码都必然在另一种终端上出错。因此：
 
-若你的终端仍在使用旧代码页（未执行 `chcp 65001` 的 cmd.exe），先切换代码页再运行：
+| 运行环境 | 选用编码 |
+|---|---|
+| 输出被重定向 / 管道 / IDE 运行窗口 / CI 捕获 | UTF-8 |
+| 连接到真实终端（PowerShell、cmd、Windows Terminal） | 终端代码页对应的编码（中文 Windows 通常是 GBK） |
+| 显式指定 `-Ddemo.encoding=UTF-8`（或 GBK） | 以该值为准，优先级最高 |
+
+Demo 的第一行会打印实际生效的编码，便于排查：
+
+```text
+== stdout encoding: UTF-8 ==      ← 重定向/IDE 捕获
+== stdout encoding: x-mswin-936 == ← 真实 GBK 控制台
+```
+
+如果仍显示乱码，按需要显式覆盖（PowerShell 下 `-D` 参数要加引号，否则会被拆成两个参数）：
 
 ```powershell
-chcp 65001
-java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
+java '-Ddemo.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
 ```
 
 ### 6.2 忽略规则 `.agentignore`
