@@ -1,15 +1,14 @@
 package com.agent;
 
 import java.io.BufferedReader;
-import java.io.Console;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.charset.Charset;
+import java.nio.charset.IllegalCharsetNameException;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.UnsupportedCharsetException;
 
 /**
  * 统一处理命令行程序的字符编码问题（stdin 解码与 stdout 编码）。
@@ -25,15 +24,21 @@ import java.nio.charset.StandardCharsets;
  *       Windows Terminal、VS Code）按 UTF-8 解码。</li>
  * </ul>
  *
- * <p>只要「写出的字节编码」与「对端的解码方式」不一致就会出问题，因此固定任何一种编码都不行，
- * 只能按运行环境推断：
+ * <p>只要「写出的字节编码」与「对端的解码方式」不一致就会出问题，因此固定任何一种编码都不行。
+ * 本类的策略是：<b>默认不做任何猜测，直接采用 JVM 探测到的编码</b>（{@code stdin.encoding} /
+ * {@code stdout.encoding}，JDK 19+ 由控制台代码页或平台编码决定），只在需要时显式覆盖：
  *
  * <ol>
  *   <li>{@code -Dagent.encoding=UTF-8}（或 {@code GBK} 等）显式指定，优先级最高；</li>
- *   <li>读写对象不是真实终端（重定向、管道、IDE 运行窗口、CI）时使用 UTF-8，
- *       因为现代工具链默认按 UTF-8 解码；</li>
- *   <li>连接到真实终端时使用 JVM 探测到的控制台编码（中文 Windows 通常是 GBK）。</li>
+ *   <li>否则使用 JVM 探测到的 {@code stdin.encoding} / {@code stdout.encoding}
+ *       —— 中文 Windows 上通常是 GBK，UTF-8 终端或 macOS / Linux 上是 UTF-8；</li>
+ *   <li>探测不到时（如较早的 JDK）回退到 {@code native.encoding}，再回退 UTF-8。</li>
  * </ol>
+ *
+ * <p>为什么不自己猜测终端类型？因为「输出被重定向 / 由 IDE 捕获」并不等价于「对端按 UTF-8 解码」：
+ * 例如在中文 Windows 上由 IDE 运行窗口捕获输出时，对端往往仍按系统编码（GBK）解码。与其用启发式
+ * 规则制造意外，不如遵循 JVM 的探测结果 —— 这也让默认行为与「直接用 System.out」完全一致，
+ * 需要不同编码时用系统属性显式声明即可。
  */
 public final class ConsoleStreams {
 
@@ -44,37 +49,32 @@ public final class ConsoleStreams {
     }
 
     /**
-     * 编码选择规则（抽成纯函数以便单元测试）。
+     * 编码选择规则（抽成纯函数以便单元测试）：显式指定优先，其次 JVM 探测值，最后兜底值。
      *
-     * @param forced          显式指定的编码，可为 {@code null} 或空白
-     * @param consoleEncoding JVM 探测到的控制台编码（{@code stdin.encoding} / {@code stdout.encoding}）
-     * @param hasTerminal     是否连接到真实终端
+     * @param forced   显式指定的编码（{@code -Dagent.encoding}），可为 {@code null} 或空白
+     * @param detected JVM 探测到的编码（{@code stdin.encoding} / {@code stdout.encoding}）
+     * @param fallback 两者都不可用时的兜底编码
      */
-    public static Charset charset(String forced, String consoleEncoding, boolean hasTerminal) {
-        if (forced != null && !forced.isBlank()) {
-            return Charset.forName(forced);
+    public static Charset charset(String forced, String detected, Charset fallback) {
+        Charset chosen = resolve(forced);
+        if (chosen == null) {
+            chosen = resolve(detected);
         }
-        if (!hasTerminal) {
-            return StandardCharsets.UTF_8;
-        }
-        if (consoleEncoding != null && !consoleEncoding.isBlank()) {
-            return Charset.forName(consoleEncoding);
-        }
-        return StandardCharsets.UTF_8;
+        return chosen == null ? fallback : chosen;
     }
 
     /** 读取标准输入时应使用的编码。 */
     public static Charset stdinCharset() {
         return charset(System.getProperty(ENCODING_PROPERTY),
                 System.getProperty("stdin.encoding"),
-                isInteractiveTerminal());
+                nativeCharset());
     }
 
     /** 写出标准输出时应使用的编码。 */
     public static Charset stdoutCharset() {
         return charset(System.getProperty(ENCODING_PROPERTY),
                 System.getProperty("stdout.encoding"),
-                isInteractiveTerminal());
+                nativeCharset());
     }
 
     /**
@@ -99,26 +99,21 @@ public final class ConsoleStreams {
         return charset;
     }
 
-    /**
-     * 判断标准输入/输出是否连接到真实终端（而不是管道、文件或 IDE 捕获的管道）。
-     *
-     * <p>JDK 22 起 {@code System.console()} 即使 stdin/stdout 被重定向也会返回对象，
-     * 需要用新增的 {@code Console.isTerminal()} 才能区分；本工程以 {@code --release 17}
-     * 编译，编译期没有这个方法，因此用反射调用。在 JDK 17~21 上 {@code console()} 返回
-     * {@code null} 即代表被重定向，语义与 {@code isTerminal() == false} 一致。
-     */
-    public static boolean isInteractiveTerminal() {
-        Console console = System.console();
-        if (console == null) {
-            return false;
+    /** 平台默认编码：JDK 17+ 的 {@code native.encoding}，取不到时用 UTF-8。 */
+    private static Charset nativeCharset() {
+        Charset nativeCharset = resolve(System.getProperty("native.encoding"));
+        return nativeCharset == null ? StandardCharsets.UTF_8 : nativeCharset;
+    }
+
+    /** 把编码名解析为 {@link Charset}；名字为空或不可用时返回 {@code null}。 */
+    private static Charset resolve(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
         }
         try {
-            Method isTerminal = Console.class.getMethod("isTerminal");
-            return (Boolean) isTerminal.invoke(console);
-        } catch (NoSuchMethodException jdk17To21) {
-            return true;
-        } catch (IllegalAccessException | InvocationTargetException unexpected) {
-            return true;
+            return Charset.forName(name);
+        } catch (IllegalCharsetNameException | UnsupportedCharsetException unsupported) {
+            return null;
         }
     }
 }

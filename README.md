@@ -113,11 +113,15 @@ UTF-8，但 JDK 19 起 `System.in`/`System.out` 使用 `stdin.encoding`/`stdout.
 （Windows 上等于控制台代码页，简体中文环境通常是 GBK），直接使用默认字符集会同时导致
 **输入乱码**（`你好` 变成 `???`）与**输出乱码**。选择规则：
 
-| 运行环境 | 选用编码 |
+| 优先级 | 选用编码 |
 |---|---|
-| 显式指定 `-Dagent.encoding=UTF-8`（或 `GBK`） | 以该值为准，优先级最高 |
-| 输出被重定向 / 管道 / IDE 运行窗口 / CI 捕获 | UTF-8 |
-| 连接到真实终端（PowerShell、cmd、Windows Terminal） | 终端代码页对应的编码（中文 Windows 通常是 GBK） |
+| 1 | 显式指定 `-Dagent.encoding=UTF-8`（或 `GBK` 等），以该值为准 |
+| 2 | JVM 探测到的 `stdin.encoding` / `stdout.encoding`（中文 Windows 通常是 GBK；UTF-8 终端与 macOS / Linux 是 UTF-8） |
+| 3 | 兜底：`native.encoding`，再兜底 UTF-8 |
+
+默认策略刻意**不做启发式猜测**（例如「输出被重定向就一定按 UTF-8 解码」并不成立：在中文 Windows
+上由 IDE 运行窗口捕获输出时，对端往往仍按 GBK 解码）。因此默认行为与「直接用 `System.out`」
+一致，需要不同编码时用系统属性显式声明。
 
 若终端显示中文异常，用系统属性强制指定即可：
 

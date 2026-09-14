@@ -63,7 +63,7 @@ git --version   ->  git version 2.47.1.windows.1
 | Step 3 | 实现 `ReadFileTool` | UTF-8 读取 + `NoSuchFileException` + 流式分页 |
 | Step 4 | 实现 `SearchCodeTool` | 遍历子目录 + 跳过二进制 + 文件 + 行号 + 内容 |
 | Step 5 | 编写 `@TempDir` 测试 | 4 个 Tool 测试类共 32 个 `@TempDir` 用例（另有控制台编码与 CLI 用例，见 §6.2） |
-| Step 6 | 构建与验证 | `mvn clean test` → `Tests run: 53, Failures: 0, Errors: 0`，`BUILD SUCCESS` |
+| Step 6 | 构建与验证 | `mvn clean test` → `Tests run: 52, Failures: 0, Errors: 0`，`BUILD SUCCESS` |
 | Step 7 | 运行 `FileToolsDemo` 做命令行验收 | 列出 17 个文件、读取 `README.md`、搜到 24 行 `TODO` |
 | Step 8 | Git 增量提交 | `7e7179d lab02: file tools` |
 
@@ -374,7 +374,7 @@ private void searchInFile(String keyword, Path root, Path p, List<Match> result)
 [INFO] Running com.agent.tool.SearchCodeToolTest
 [INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.tool.SearchCodeToolTest
 [INFO] Results:
-[INFO] Tests run: 53, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 52, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -383,7 +383,7 @@ private void searchInFile(String keyword, Path root, Path p, List<Match> result)
 | 测试类 | 用例数 | 覆盖内容 |
 |---|---:|---|
 | `AgentTest`（Lab01） | 9 | 回归：`Agent.respond` 的分支与边界未被改动破坏 |
-| `ConsoleStreamsTest`（编码） | 6 | 编码选择规则：显式指定优先、空白值忽略、非终端用 UTF-8、真实终端用控制台编码、控制台编码未知时回退 UTF-8、`-Dagent.encoding` 生效 |
+| `ConsoleStreamsTest`（编码） | 5 | 编码选择规则：显式指定优先、空白/非法名字忽略、默认采用 JVM 探测值（GBK 与 UTF-8 两种情形）、探测值不可用时回退、`-Dagent.encoding` 生效 |
 | `MainTest`（Lab01 修复） | 6 | 用字节流模拟 GBK / UTF-8 控制台：中文输入正确回显、逐行处理、`quit`（含大小写）、EOF 无输出 |
 | `IgnoreRulesTest` | 5 | 目录规则、glob 规则、注释/空行跳过、配置文件缺失回退默认、从文件加载 |
 | `ListFilesToolTest` | 8 | 递归、排序、只列文件、默认忽略规则、深度限制、负深度、非法根目录、树形输出、自定义规则注入 |
@@ -440,7 +440,7 @@ src/test/java/com/agent/tool/SearchCodeToolTest.java:27: assertEquals(List.of(ne
 
 ### 7.2 单元测试验证
 
-见 §6.1：`Tests run: 53, Failures: 0, Errors: 0` + `BUILD SUCCESS`，可重复执行。
+见 §6.1：`Tests run: 52, Failures: 0, Errors: 0` + `BUILD SUCCESS`，可重复执行。
 
 ### 7.3 命令行验证（清理并重编 + Demo）
 
@@ -567,47 +567,43 @@ System.setOut(new PrintStream(
 
 字节比对确认输出已变成 UTF-8（按 UTF-8 解码正确、按 GBK 解码反而乱码）。**但这个修复并不完整**：在按 GBK 解码的真实 Windows 控制台里，中文又反过来变成乱码 —— 换句话说，**写死任何一种编码，都必然在另一种终端上出错**。
 
-**最终解决（按运行环境自适应）**：编码选择规则抽成可测的纯函数，并区分「真实终端」与「管道/IDE 捕获」：
+**第二次尝试（猜测终端类型）**：引入 `Console.isTerminal()`（JDK 22 新增，用反射调用以兼容
+`--release 17` 编译）区分「真实终端」与「管道 / IDE 捕获」，并规定后者使用 UTF-8。
+
+**结果：仍然失败。** 使用者反馈「默认仍然乱码，但加上 `-Dagent.encoding=GBK` 就正常」——
+这说明那条启发式假设**不成立**：`输出被重定向 / 由 IDE 捕获` 并不等价于`对端按 UTF-8 解码`。
+在中文 Windows 上，IDE 运行窗口捕获输出时对端往往仍按系统编码（GBK）解码。用「环境形态」去推测
+「对端解码方式」，本质上是在猜，而猜错时用户看到的就是乱码。
+
+**最终解决（不猜测，遵循 JVM 探测结果）**：默认直接采用 JVM 探测到的编码，只在显式指定时覆盖：
 
 ```java
-static Charset charset(String forced, String consoleEncoding, boolean hasTerminal) {
-    if (forced != null && !forced.isBlank()) return Charset.forName(forced);  // -Dagent.encoding 优先
-    if (!hasTerminal) return StandardCharsets.UTF_8;                           // 重定向 / IDE / CI
-    return consoleEncoding == null || consoleEncoding.isBlank()
-            ? StandardCharsets.UTF_8
-            : Charset.forName(consoleEncoding);                              // 真实终端用控制台编码
+static Charset charset(String forced, String detected, Charset fallback) {
+    Charset chosen = resolve(forced);      // -Dagent.encoding=... （优先级最高）
+    if (chosen == null) chosen = resolve(detected);   // stdin.encoding / stdout.encoding
+    return chosen == null ? fallback : chosen;        // 兜底：native.encoding，再兜底 UTF-8
 }
 ```
 
-「是否真实终端」不能用 `System.console() != null` 判断：**JDK 22 起即使 stdout 被重定向，`console()` 也会返回对象**，必须用 JDK 22 新增的 `Console.isTerminal()`。由于本工程以 `--release 17` 编译、编译期看不到该方法，改用反射调用，在 JDK 17~21 上回退到「`console()` 非 null 即为终端」的旧语义：
+这样默认行为与「直接用 `System.out`」完全一致（JDK 19+ 本来就是按控制台代码页 / 平台编码决定），
+既不会在 GBK 控制台或 GBK 解码的 IDE 里出错，也不会在 UTF-8 终端、macOS / Linux 上出错；
+确实需要不同编码时（例如 IDE 把运行窗口设成 UTF-8），再用系统属性显式声明。
 
-```java
-private static boolean isInteractiveTerminal() {
-    Console console = System.console();
-    if (console == null) return false;                 // JDK 17~21：重定向 ⇒ null
-    try {
-        return (Boolean) Console.class.getMethod("isTerminal").invoke(console);  // JDK 22+
-    } catch (NoSuchMethodException jdk17To21) {
-        return true;
-    }
-}
-```
-
-**验证（两条分支都实测）**：
+**验证（不加任何参数即为默认行为）**：
 
 ```text
-重定向 / 管道 / IDE 捕获：== stdout encoding: UTF-8 ==    → 按 UTF-8 解码，中文正确
-真实终端（本机控制台代码页 936）：== stdout encoding: x-mswin-936 ==  → 按 GBK 解码，中文正确
-显式覆盖：-Dagent.encoding=GBK / UTF-8                    → 按指定编码输出（用于极端环境）
+本机属性：file.encoding=UTF-8  native.encoding=GBK  stdout.encoding=GBK
+默认（无参数）：   == stdout encoding: GBK ==        → 按 GBK 解码，中文正确
+显式覆盖：        -Dagent.encoding=UTF-8             → 输出 UTF-8 字节，按 UTF-8 解码正确
 ```
 
-Demo 的第一行会打印实际生效的编码，出现乱码时可以据此立刻判断该用哪种覆盖值；选择规则本身由 `ConsoleStreamsTest` 的 6 个用例固定住。
+Demo 的第一行会打印实际生效的编码，出现乱码时可以据此立刻判断该用哪种覆盖值；选择规则本身由 `ConsoleStreamsTest` 的 5 个用例固定住。
 
 > 补充：这套自适应逻辑后来被抽成公共类 `com.agent.ConsoleStreams`，`FileToolsDemo` 与本工程的 CLI（`Main`）共用 —— 因为 Lab01 的 CLI 存在**同一根因的输入侧缺陷**（`new InputStreamReader(System.in)` 用默认 UTF-8 解码 GBK 控制台输入，中文变成 `???`），详见 Lab01 报告「遇到的问题与解决方案」。
 
 顺带记录过程中踩到的两个坑：① `-Dstdout.encoding=UTF-8` 在 PowerShell 下不加引号会被拆成两个参数（报 `ClassNotFoundException: /encoding=UTF-8`），必须写成 `'-Dstdout.encoding=UTF-8'`；② 用 `>` 重定向还会再经过 PowerShell 自身的一次编码转换，验证编码问题时应改用 `Start-Process -RedirectStandardOutput` 或直接比对字节。
 
-**结论**：乱码是**输出编码**问题，不是 Tool 的数据问题。`ReadFileTool` 的正确性由 `shouldReadUtf8Content`（`"你好，Agent！"`）用例保证；输出/输入编码则由 `ConsoleStreams` 按环境自适应，并提供 `-Dagent.encoding` 兜底。
+**结论**：乱码是**输出编码**问题，不是 Tool 的数据问题。`ReadFileTool` 的正确性由 `shouldReadUtf8Content`（`"你好，Agent！"`）用例保证；输出/输入编码则默认遵循 JVM 探测结果，并提供 `-Dagent.encoding` 覆盖。这一节也是本实验最有价值的一课：**面对「环境相关的编码」问题，宁可遵循平台探测结果，也不要写启发式猜测**。
 
 ### 问题 6：`Files.walk` 的 Stream 与文件句柄
 
@@ -633,7 +629,7 @@ Demo 的第一行会打印实际生效的编码，出现乱码时可以据此立
 
 1. **边界是「上下文」而非「权限」**：模型不是「没权限读你的文件」，而是**没有任何读文件的通道**。即使给它完整的磁盘访问权，它也需要一个能执行 I/O 的程序，而它本身只输出文本。
 2. **边界两侧的职责不同**：LLM 负责「决定读什么、怎么理解、下一步做什么」；Java 程序（Tool）负责「真正去文件系统执行并把结果变成文本」。
-3. **边界带来了确定性的责任划分**：Tool 是确定性的、可单元测试的（本工程 53 个测试）；LLM 是概率性的、不可穷举的。把不确定性关在 `Agent` 的决策层，把确定性沉淀在 Tool 层，是整个 Agent 架构最重要的分界。
+3. **边界带来了确定性的责任划分**：Tool 是确定性的、可单元测试的（本工程 52 个测试）；LLM 是概率性的、不可穷举的。把不确定性关在 `Agent` 的决策层，把确定性沉淀在 Tool 层，是整个 Agent 架构最重要的分界。
 
 所以本实验实现的三个 Tool，本质上是 Agent 的「手脚」：**没有 Tool，再强的模型也只能凭空编造项目内容**（这也是幻觉的一大来源——模型被问到没见过的东西时，只能用训练分布里的典型代码去补全）。反过来，一旦有了 `ReadFileTool` 与 `SearchCodeTool`，Agent 的输入就从「猜测」变成了「证据」。
 
@@ -734,7 +730,7 @@ public record Match(String file, int line, String content) {
 
 > 本实验造好了「手脚」并单独验证了它们，但「大脑决定用手还是用脚」的环节要到引入 LLM 之后才补齐。
 
-这个划分有重要的工程意义：**执行层必须是确定且可测试的，决策层才允许是概率的**。因为执行层一旦出错（读错文件、路径越权、把二进制当文本），后果是真实且不可撤销的；而把执行层用 53 个测试钉死之后，后续引入 LLM 时，出问题就可以快速定位成「模型决策错了」而不是「工具执行错了」。
+这个划分有重要的工程意义：**执行层必须是确定且可测试的，决策层才允许是概率的**。因为执行层一旦出错（读错文件、路径越权、把二进制当文本），后果是真实且不可撤销的；而把执行层用 52 个测试钉死之后，后续引入 LLM 时，出问题就可以快速定位成「模型决策错了」而不是「工具执行错了」。
 
 ### 9.6 某个文件读取抛 `IOException` 时，为什么选择「跳过」而非「中断」？这对鲁棒性意味着什么？
 
@@ -798,7 +794,7 @@ public record Match(String file, int line, String content) {
 | 任务 | 内容 | 状态 | 证据 |
 |---|---|:---:|---|
 | 必做 1–3 | `ListFilesTool` / `ReadFileTool` / `SearchCodeTool` | ✅ | `src/main/java/com/agent/tool/` 三个 Tool，签名与实验要求一致（`searchCode` 接收 `keyword` + `path`） |
-| 必做 4 | 每个 Tool 配 JUnit 测试（`@TempDir`） | ✅ | 4 个 Tool 测试类、32 个 `@TempDir` 用例（工程总计 53 个） |
+| 必做 4 | 每个 Tool 配 JUnit 测试（`@TempDir`） | ✅ | 4 个 Tool 测试类、32 个 `@TempDir` 用例（工程总计 52 个） |
 | 必做 5 | Git 增量提交 | ✅ | `7e7179d lab02: file tools` |
 | 选做 1 | `ListFilesTool` 最大深度参数 | ✅ | `listFiles(root, maxDepth)` + `shouldRespectMaxDepth` |
 | 选做 2 | `SearchCodeTool` 正则匹配 | ✅ | `searchCodeRegex(Pattern, root)` + `shouldSupportRegexSearch` |
@@ -841,7 +837,7 @@ public record Match(String file, int line, String content) {
 ## 附录 B：常用命令
 
 ```bash
-mvn clean test                                                    # 53 个测试
+mvn clean test                                                    # 52 个测试
 mvn -q -DskipTests compile
 java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
 java -cp target/classes com.agent.tool.FileToolsDemo --tree
@@ -856,6 +852,6 @@ V2
 ├── ListFilesTool   ✅  递归 + 忽略规则 + 深度限制 + 树形输出
 ├── ReadFileTool    ✅  UTF-8 + 明确异常 + 流式分页
 ├── SearchCodeTool  ✅  子目录 + 跳过二进制/忽略目录 + 文件:行号:内容 + 正则
-├── Test            ✅  53 个用例全通过（Tests run: 53, Failures: 0, Errors: 0）
+├── Test            ✅  52 个用例全通过（Tests run: 52, Failures: 0, Errors: 0）
 └── Git             ✅  7e7179d lab02: file tools
 ```
