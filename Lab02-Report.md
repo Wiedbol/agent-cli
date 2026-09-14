@@ -62,8 +62,8 @@ git --version   ->  git version 2.47.1.windows.1
 | Step 2 | 实现 `ListFilesTool`（AI 生成 → 审查 → 修改） | 递归列出 + 忽略规则 + 深度限制 + 树形输出 |
 | Step 3 | 实现 `ReadFileTool` | UTF-8 读取 + `NoSuchFileException` + 流式分页 |
 | Step 4 | 实现 `SearchCodeTool` | 遍历子目录 + 跳过二进制 + 文件 + 行号 + 内容 |
-| Step 5 | 编写 `@TempDir` 测试 | 5 个测试类、37 个新用例（Tool 部分） |
-| Step 6 | 构建与验证 | `mvn clean test` → `Tests run: 46, Failures: 0, Errors: 0`，`BUILD SUCCESS` |
+| Step 5 | 编写 `@TempDir` 测试 | 4 个 Tool 测试类共 32 个 `@TempDir` 用例（另有控制台编码与 CLI 用例，见 §6.2） |
+| Step 6 | 构建与验证 | `mvn clean test` → `Tests run: 53, Failures: 0, Errors: 0`，`BUILD SUCCESS` |
 | Step 7 | 运行 `FileToolsDemo` 做命令行验收 | 列出 17 个文件、读取 `README.md`、搜到 24 行 `TODO` |
 | Step 8 | Git 增量提交 | `7e7179d lab02: file tools` |
 
@@ -357,12 +357,14 @@ private void searchInFile(String keyword, Path root, Path p, List<Match> result)
 ### 6.1 `mvn clean test` 输出
 
 ```text
-[INFO] Compiling 7 source files with javac [debug release 17] to target\classes
-[INFO] Compiling 6 source files with javac [debug release 17] to target\test-classes
+[INFO] Compiling 8 source files with javac [debug release 17] to target\classes
+[INFO] Compiling 7 source files with javac [debug release 17] to target\test-classes
 [INFO] Running com.agent.AgentTest
 [INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.AgentTest
-[INFO] Running com.agent.tool.FileToolsDemoTest
-[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.tool.FileToolsDemoTest
+[INFO] Running com.agent.ConsoleStreamsTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.ConsoleStreamsTest
+[INFO] Running com.agent.MainTest
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.MainTest
 [INFO] Running com.agent.tool.IgnoreRulesTest
 [INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.tool.IgnoreRulesTest
 [INFO] Running com.agent.tool.ListFilesToolTest
@@ -372,7 +374,7 @@ private void searchInFile(String keyword, Path root, Path p, List<Match> result)
 [INFO] Running com.agent.tool.SearchCodeToolTest
 [INFO] Tests run: 10, Failures: 0, Errors: 0, Skipped: 0 -- in com.agent.tool.SearchCodeToolTest
 [INFO] Results:
-[INFO] Tests run: 46, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 53, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -381,7 +383,8 @@ private void searchInFile(String keyword, Path root, Path p, List<Match> result)
 | 测试类 | 用例数 | 覆盖内容 |
 |---|---:|---|
 | `AgentTest`（Lab01） | 9 | 回归：`Agent.respond` 的分支与边界未被改动破坏 |
-| `FileToolsDemoTest` | 5 | 输出编码选择规则：显式指定优先、空白值忽略、重定向用 UTF-8、真实终端用控制台编码、控制台编码未知时回退 UTF-8 |
+| `ConsoleStreamsTest`（编码） | 6 | 编码选择规则：显式指定优先、空白值忽略、非终端用 UTF-8、真实终端用控制台编码、控制台编码未知时回退 UTF-8、`-Dagent.encoding` 生效 |
+| `MainTest`（Lab01 修复） | 6 | 用字节流模拟 GBK / UTF-8 控制台：中文输入正确回显、逐行处理、`quit`（含大小写）、EOF 无输出 |
 | `IgnoreRulesTest` | 5 | 目录规则、glob 规则、注释/空行跳过、配置文件缺失回退默认、从文件加载 |
 | `ListFilesToolTest` | 8 | 递归、排序、只列文件、默认忽略规则、深度限制、负深度、非法根目录、树形输出、自定义规则注入 |
 | `ReadFileToolTest` | 9 | 整文件读取、UTF-8、文件不存在、路径是目录、非法 UTF-8、分页切片、limit 超尾部、offset 越界、参数非法 |
@@ -410,7 +413,7 @@ void shouldFindKeywordWithLineNumberAndContent(@TempDir Path dir) throws IOExcep
 | `shouldThrowOnNonUtf8Content` | 写入 `0x89 P N G 0xFF 0xFE 0x00` 的字节 | 抛 `MalformedInputException` | 若用「替换字符」策略，二进制会被当作文本返回，Agent 会拿到垃圾数据还以为读取成功 |
 | `shouldSkipUndecodableFileAndKeepSearching` | 同时存在正常文件与非法字节文件，二者都含 `TODO` | 只命中正常文件，不抛异常 | 验证「单文件失败 → 跳过 → 搜索继续」而非整体中断 |
 
-> 这五个测试类（合计 37 个 Tool 用例）在 0.2 秒左右即全部跑完（单类耗时约 0.008s–0.078s），且不写任何工程文件、不产生 `git status` 噪声 —— 这正是 Lab01 思考题里「可测试性是设计出来的」在文件操作场景下的延续。
+> 这四个 Tool 测试类（合计 32 个用例）连同编码 / CLI 用例，在 0.2 秒左右即全部跑完（单类耗时约 0.008s–0.078s），且不写任何工程文件、不产生 `git status` 噪声 —— 这正是 Lab01 思考题里「可测试性是设计出来的」在文件操作场景下的延续。
 
 ---
 
@@ -437,7 +440,7 @@ src/test/java/com/agent/tool/SearchCodeToolTest.java:27: assertEquals(List.of(ne
 
 ### 7.2 单元测试验证
 
-见 §6.1：`Tests run: 46, Failures: 0, Errors: 0` + `BUILD SUCCESS`，可重复执行。
+见 §6.1：`Tests run: 53, Failures: 0, Errors: 0` + `BUILD SUCCESS`，可重复执行。
 
 ### 7.3 命令行验证（清理并重编 + Demo）
 
@@ -567,12 +570,12 @@ System.setOut(new PrintStream(
 **最终解决（按运行环境自适应）**：编码选择规则抽成可测的纯函数，并区分「真实终端」与「管道/IDE 捕获」：
 
 ```java
-static Charset chooseStdoutEncoding(String forced, String consoleEncoding, boolean hasConsole) {
-    if (forced != null && !forced.isBlank()) return Charset.forName(forced);  // -Ddemo.encoding 优先
-    if (!hasConsole) return StandardCharsets.UTF_8;                            // 重定向 / IDE / CI
+static Charset charset(String forced, String consoleEncoding, boolean hasTerminal) {
+    if (forced != null && !forced.isBlank()) return Charset.forName(forced);  // -Dagent.encoding 优先
+    if (!hasTerminal) return StandardCharsets.UTF_8;                           // 重定向 / IDE / CI
     return consoleEncoding == null || consoleEncoding.isBlank()
             ? StandardCharsets.UTF_8
-            : Charset.forName(consoleEncoding);                               // 真实终端用控制台编码
+            : Charset.forName(consoleEncoding);                              // 真实终端用控制台编码
 }
 ```
 
@@ -595,14 +598,16 @@ private static boolean isInteractiveTerminal() {
 ```text
 重定向 / 管道 / IDE 捕获：== stdout encoding: UTF-8 ==    → 按 UTF-8 解码，中文正确
 真实终端（本机控制台代码页 936）：== stdout encoding: x-mswin-936 ==  → 按 GBK 解码，中文正确
-显式覆盖：-Ddemo.encoding=GBK / UTF-8                     → 按指定编码输出（用于极端环境）
+显式覆盖：-Dagent.encoding=GBK / UTF-8                    → 按指定编码输出（用于极端环境）
 ```
 
-Demo 的第一行会打印实际生效的编码，出现乱码时可以据此立刻判断该用哪种覆盖值；选择规则本身由 `FileToolsDemoTest` 的 5 个用例固定住。
+Demo 的第一行会打印实际生效的编码，出现乱码时可以据此立刻判断该用哪种覆盖值；选择规则本身由 `ConsoleStreamsTest` 的 6 个用例固定住。
+
+> 补充：这套自适应逻辑后来被抽成公共类 `com.agent.ConsoleStreams`，`FileToolsDemo` 与本工程的 CLI（`Main`）共用 —— 因为 Lab01 的 CLI 存在**同一根因的输入侧缺陷**（`new InputStreamReader(System.in)` 用默认 UTF-8 解码 GBK 控制台输入，中文变成 `???`），详见 Lab01 报告「遇到的问题与解决方案」。
 
 顺带记录过程中踩到的两个坑：① `-Dstdout.encoding=UTF-8` 在 PowerShell 下不加引号会被拆成两个参数（报 `ClassNotFoundException: /encoding=UTF-8`），必须写成 `'-Dstdout.encoding=UTF-8'`；② 用 `>` 重定向还会再经过 PowerShell 自身的一次编码转换，验证编码问题时应改用 `Start-Process -RedirectStandardOutput` 或直接比对字节。
 
-**结论**：乱码是**输出编码**问题，不是 Tool 的数据问题。`ReadFileTool` 的正确性由 `shouldReadUtf8Content`（`"你好，Agent！"`）用例保证；输出编码则由 Demo 入口按环境自适应，并提供 `-Ddemo.encoding` 兜底。
+**结论**：乱码是**输出编码**问题，不是 Tool 的数据问题。`ReadFileTool` 的正确性由 `shouldReadUtf8Content`（`"你好，Agent！"`）用例保证；输出/输入编码则由 `ConsoleStreams` 按环境自适应，并提供 `-Dagent.encoding` 兜底。
 
 ### 问题 6：`Files.walk` 的 Stream 与文件句柄
 
@@ -628,7 +633,7 @@ Demo 的第一行会打印实际生效的编码，出现乱码时可以据此立
 
 1. **边界是「上下文」而非「权限」**：模型不是「没权限读你的文件」，而是**没有任何读文件的通道**。即使给它完整的磁盘访问权，它也需要一个能执行 I/O 的程序，而它本身只输出文本。
 2. **边界两侧的职责不同**：LLM 负责「决定读什么、怎么理解、下一步做什么」；Java 程序（Tool）负责「真正去文件系统执行并把结果变成文本」。
-3. **边界带来了确定性的责任划分**：Tool 是确定性的、可单元测试的（本实验 46 个测试）；LLM 是概率性的、不可穷举的。把不确定性关在 `Agent` 的决策层，把确定性沉淀在 Tool 层，是整个 Agent 架构最重要的分界。
+3. **边界带来了确定性的责任划分**：Tool 是确定性的、可单元测试的（本工程 53 个测试）；LLM 是概率性的、不可穷举的。把不确定性关在 `Agent` 的决策层，把确定性沉淀在 Tool 层，是整个 Agent 架构最重要的分界。
 
 所以本实验实现的三个 Tool，本质上是 Agent 的「手脚」：**没有 Tool，再强的模型也只能凭空编造项目内容**（这也是幻觉的一大来源——模型被问到没见过的东西时，只能用训练分布里的典型代码去补全）。反过来，一旦有了 `ReadFileTool` 与 `SearchCodeTool`，Agent 的输入就从「猜测」变成了「证据」。
 
@@ -729,7 +734,7 @@ public record Match(String file, int line, String content) {
 
 > 本实验造好了「手脚」并单独验证了它们，但「大脑决定用手还是用脚」的环节要到引入 LLM 之后才补齐。
 
-这个划分有重要的工程意义：**执行层必须是确定且可测试的，决策层才允许是概率的**。因为执行层一旦出错（读错文件、路径越权、把二进制当文本），后果是真实且不可撤销的；而把执行层用 46 个测试钉死之后，后续引入 LLM 时，出问题就可以快速定位成「模型决策错了」而不是「工具执行错了」。
+这个划分有重要的工程意义：**执行层必须是确定且可测试的，决策层才允许是概率的**。因为执行层一旦出错（读错文件、路径越权、把二进制当文本），后果是真实且不可撤销的；而把执行层用 53 个测试钉死之后，后续引入 LLM 时，出问题就可以快速定位成「模型决策错了」而不是「工具执行错了」。
 
 ### 9.6 某个文件读取抛 `IOException` 时，为什么选择「跳过」而非「中断」？这对鲁棒性意味着什么？
 
@@ -768,7 +773,7 @@ public record Match(String file, int line, String content) {
 
 ### 9.8 用 `@TempDir` 构造测试夹具而非依赖真实项目结构，带来了哪些好处？依赖真实目录会在 CI / 不同机器上出什么问题？
 
-`@TempDir` 的好处（都在本实验的 37 个 Tool 用例中体现）：
+`@TempDir` 的好处（都在本实验的 32 个 Tool 用例中体现）：
 
 1. **隔离性**：每个测试方法拿到一个全新的空目录，测试之间零共享状态，可任意顺序执行、可并行执行。
 2. **确定性**：测试自己造数据（`Files.writeString(dir.resolve("A.java"), "...")`），期望值来自测试自身，而不是来自项目里恰好存在的内容。例如 `shouldFindKeywordWithLineNumberAndContent` 断言「第 2 行命中」，不需要关心仓库里其它文件有没有 `TODO`。
@@ -793,7 +798,7 @@ public record Match(String file, int line, String content) {
 | 任务 | 内容 | 状态 | 证据 |
 |---|---|:---:|---|
 | 必做 1–3 | `ListFilesTool` / `ReadFileTool` / `SearchCodeTool` | ✅ | `src/main/java/com/agent/tool/` 三个 Tool，签名与实验要求一致（`searchCode` 接收 `keyword` + `path`） |
-| 必做 4 | 每个 Tool 配 JUnit 测试（`@TempDir`） | ✅ | 5 个测试类、37 个 Tool 用例 |
+| 必做 4 | 每个 Tool 配 JUnit 测试（`@TempDir`） | ✅ | 4 个 Tool 测试类、32 个 `@TempDir` 用例（工程总计 53 个） |
 | 必做 5 | Git 增量提交 | ✅ | `7e7179d lab02: file tools` |
 | 选做 1 | `ListFilesTool` 最大深度参数 | ✅ | `listFiles(root, maxDepth)` + `shouldRespectMaxDepth` |
 | 选做 2 | `SearchCodeTool` 正则匹配 | ✅ | `searchCodeRegex(Pattern, root)` + `shouldSupportRegexSearch` |
@@ -807,7 +812,7 @@ public record Match(String file, int line, String content) {
 ## 11. 实验总结
 
 1. **「LLM ≠ 文件系统」是本实验最核心的认知。** 模型再强，它的世界也只有上下文窗口；项目代码要进入它的视野，必须由 Tool 把磁盘上的字节变成文本。这条边界决定了 Agent 架构的分工：**决策（概率）交给 LLM，执行（确定）交给 Tool**。
-2. **文件操作的正确性必须靠测试来定义，而不是靠「跑一次试试」。** 本实验 37 个 Tool 用例里有一半是异常与边界路径：文件不存在、路径是目录、非法 UTF-8、不可解码文件、`target/` 内的 `.java`、空关键字、负深度、`limit <= 0`，以及输出编码在不同终端下的选择规则。这些都是「手跑一次 Demo 永远不会碰到、但线上一定会碰到」的场景。`@TempDir` 让它们可以在 0.2 秒内被反复验证。
+2. **文件操作的正确性必须靠测试来定义，而不是靠「跑一次试试」。** 本实验 32 个 Tool 用例里有一半是异常与边界路径：文件不存在、路径是目录、非法 UTF-8、不可解码文件、`target/` 内的 `.java`、空关键字、负深度、`limit <= 0`，以及编码在不同终端下的选择规则。这些都是「手跑一次 Demo 永远不会碰到、但线上一定会碰到」的场景。`@TempDir` 让它们可以在 0.2 秒内被反复验证。
 3. **AI 生成的代码「结构对」但「边界糊」。** 三次 AI 任务的审查结论高度一致：AI 都很熟练地写出了 `Files.walk` + `try-with-resources` + `relativize` 的主干，但都在**边界**上偷懒 —— 忽略规则硬编码且语义混淆（`.DS_Store` 混进扩展名列表）、`Path::toString` 的平台差异、`catch (IOException ignored)` 静默吞掉一切、重载带来的调用歧义。这些都不是「语法错误」，编译器与 AI 自己都发现不了，只有把需求逐条拆成检查项（是否递归？是否过滤目录？失败是否中断？）才能审出来。
 4. **异常设计是接口设计的一部分。** 这次特意区分了 `NoSuchFileException`（环境问题，可被调用方降级处理）与 `IllegalArgumentException`（调用方参数错误，必须立即暴露），并把「单文件失败跳过、整体失败报错」作为两条不同的策略固定下来。这为 Lab04 把异常统一包装成 `ToolResult(success=false)` 打好了基础。
 5. **「先做对、再做统一」的顺序是对的。** 本实验刻意保留三个 Tool 签名不一致的技术债，用真实的痛点（写不出统一循环、没法统一生成 LLM 工具描述、异常契约各写一套、重载歧义）说明 Lab04 的 `Tool` 接口不是形式主义。抽象应当由痛点驱动，而不是先有接口再硬塞实现。
@@ -836,7 +841,7 @@ public record Match(String file, int line, String content) {
 ## 附录 B：常用命令
 
 ```bash
-mvn clean test                                                    # 46 个测试
+mvn clean test                                                    # 53 个测试
 mvn -q -DskipTests compile
 java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
 java -cp target/classes com.agent.tool.FileToolsDemo --tree
@@ -851,6 +856,6 @@ V2
 ├── ListFilesTool   ✅  递归 + 忽略规则 + 深度限制 + 树形输出
 ├── ReadFileTool    ✅  UTF-8 + 明确异常 + 流式分页
 ├── SearchCodeTool  ✅  子目录 + 跳过二进制/忽略目录 + 文件:行号:内容 + 正则
-├── Test            ✅  46 个用例全通过（Tests run: 46, Failures: 0, Errors: 0）
+├── Test            ✅  53 个用例全通过（Tests run: 53, Failures: 0, Errors: 0）
 └── Git             ✅  7e7179d lab02: file tools
 ```

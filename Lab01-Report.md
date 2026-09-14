@@ -56,7 +56,7 @@ git --version   ->  git version 2.47.1.windows.1
 | Step 4 | 实现核心逻辑 `Agent.java` | 纯逻辑：`respond(String)` |
 | Step 5 | 实现 I/O 接线 `Main.java` | stdin 逐行读入、stdout 输出、`quit` 退出 |
 | Step 6 | 编写单元测试 `AgentTest.java` | 3 个要求用例 + 6 个边界用例 |
-| Step 7 | 构建与验证 | `mvn clean test` → `Tests run: 9, Failures: 0`，`BUILD SUCCESS` |
+| Step 7 | 构建与验证 | `mvn clean test` → 当时 `Tests run: 9, Failures: 0`；修复中文乱码后为 `Tests run: 53`，`BUILD SUCCESS` |
 | Step 8 | 运行 CLI | `java -cp target/classes com.agent.Main`、`java -jar target/agent-cli-0.1.0.jar`、`mvn exec:java` |
 | Step 9 | 创建 `.gitignore` 并首次提交 | commit `a9464e7 bootstrap project`；本轮补充提交 `d06b5ff` |
 | Step 10 | 编写 `README.md` | 环境、构建、运行、交互行为说明 |
@@ -73,9 +73,12 @@ agent-cli/
 └── src/
     ├── main/java/com/agent/
     │   ├── Agent.java
+│   ├── ConsoleStreams.java   # 控制台编码自适应（修复中文乱码时新增，见 §8 问题 5）
     │   └── Main.java
     └── test/java/com/agent/
-        └── AgentTest.java
+        ├── AgentTest.java
+        ├── ConsoleStreamsTest.java
+        └── MainTest.java
 ```
 
 Git 提交历史：
@@ -122,26 +125,38 @@ package com.agent;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.PrintStream;
 
 public class Main {
 
     private static final String QUIT_COMMAND = "quit";
 
     public static void main(String[] args) throws IOException {
-        Agent agent = new Agent();
-        BufferedReader reader =
-                new BufferedReader(new InputStreamReader(System.in));
+        // 先按环境把 stdout 固定为「终端能正确解码的编码」，再取 System.out
+        ConsoleStreams.configureStdout();
+        run(new Agent(), ConsoleStreams.newStdinReader(), System.out);
+    }
+
+    /**
+     * I/O 循环：逐行读取 → 交给 Agent → 打印；读到 quit 或 EOF 结束。
+     * 把循环抽出并接收显式的流参数，便于单元测试（无需启动进程）。
+     */
+    static void run(Agent agent, BufferedReader reader, PrintStream out) throws IOException {
         String line;
         while ((line = reader.readLine()) != null) {
             if (QUIT_COMMAND.equalsIgnoreCase(line.trim())) {
                 break;
             }
-            System.out.println(agent.respond(line));
+            out.println(agent.respond(line));
         }
+        out.flush();
     }
 }
 ```
+
+> 说明：上面的写法是**修复中文乱码之后**的最终版本。最初 AI 生成的 `Main` 直接用
+> `new BufferedReader(new InputStreamReader(System.in))`，在 GBK 控制台下输入中文会得到
+> `I heard: ???`；定位与修复过程见 §8 问题 5。
 
 ### 4.2 为什么这样划分
 
@@ -214,6 +229,9 @@ mvn -B clean test
 [INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
+
+> 这是 Lab01 阶段（AI Task 01）的输出，当时工程中只有 `AgentTest` 的 9 个用例；
+> 修复中文乱码缺陷后新增了 CLI 与编码用例，当前工程总计 53 个用例（见 §6.4）。
 
 ### 5.2 AI Task 02：Implement CLI
 
@@ -355,6 +373,9 @@ private final Agent agent = new Agent();
 [INFO] BUILD SUCCESS
 ```
 
+> 这是 AI Task 03 完成时的输出（当时工程中只有 `AgentTest`）。后续为修复中文乱码新增了
+> `MainTest` 与 `ConsoleStreamsTest`，当前工程总计 53 个用例，见 §6.4 与 §8 问题 5。
+
 ---
 
 ## 6. 测试结果与覆盖说明
@@ -384,6 +405,33 @@ private final Agent agent = new Agent();
 
 当前实现中，「`hello!`」「`hello world`」这类输入会走兜底分支回显为 `I heard: hello!`，而不是问候。这是**有意为之**的保守策略：只有「整行内容（忽略首尾空白与大小写）恰好是 hello」才触发问候。若希望更宽松（如 `startsWith("hello")`），必须同步更新测试用例，把这条隐式语义变成显式的、可回归的断言。
 
+### 6.4 缺陷修复后新增的测试（CLI 与编码）
+
+修复「输入中文返回乱码」时（见 §8 问题 5）新增了两个测试类，共 12 个用例。它们与 `@TempDir`
+夹具的思路一致：**不依赖真实终端，而是用字节流把「控制台」搬进测试**。
+
+| 测试类 | 用例数 | 覆盖内容 |
+|---|---:|---|
+| `MainTest` | 6 | 用 GBK / UTF-8 字节流模拟控制台输入：中文正确回显、逐行处理、`quit`（含大小写）、空输入无输出 |
+| `ConsoleStreamsTest` | 6 | 编码选择规则：显式指定优先、空白值忽略、非终端用 UTF-8、真实终端用控制台编码、控制台编码未知时回退 UTF-8、`-Dagent.encoding` 生效 |
+
+其中 `MainTest` 的写法值得记录 —— 先构造**真实的 GBK 字节**，再用同一编码解码，等价于
+「用户在中文 Windows 控制台里输入」：
+
+```java
+private static BufferedReader stdin(String rawText, Charset charset) {
+    return new BufferedReader(new InputStreamReader(
+            new ByteArrayInputStream(rawText.getBytes(charset)), charset));
+}
+
+@Test
+void shouldEchoChineseTypedInGbkConsole() throws Exception {
+    assertEquals("I heard: 你好\n", runWith("你好\n", GBK));
+}
+```
+
+修复前把 `charset` 换成默认的 UTF-8 复现该缺陷，输出即变成 `I heard: ???`。
+
 ---
 
 ## 7. 验证记录（对照实验 §9）
@@ -392,7 +440,7 @@ private final Agent agent = new Agent();
 
 | 编号 | 验收项 | 实际命令 | 实际结果 | 判定 |
 |---|---|---|---|---|
-| AT01 | 项目能构建 | `mvn -B clean test` | `Tests run: 9, Failures: 0, Errors: 0` + `BUILD SUCCESS` | ✅ |
+| AT01 | 项目能构建 | `mvn -B clean test` | `Tests run: 53, Failures: 0, Errors: 0` + `BUILD SUCCESS` | ✅ |
 | AT02 | CLI 能启动 | `java -cp target/classes com.agent.Main` | 启动后**不报错**；用 `ProcessStartInfo` 重定向 stdin 后等待 2 秒进程仍存活（`alive after 2s with no input: True`），发送 `hello` 后输出 `Hello, Agent!`，退出码 0 | ✅ |
 | AT03 | 输入输出正确 | `"hello" \| java -cp target/classes com.agent.Main` | 输出 `Hello, Agent!` | ✅ |
 | AT04 | Git 已提交 | `git log --oneline` | `d06b5ff`、`a9464e7`（≥1 条） | ✅ |
@@ -420,7 +468,9 @@ $p.ExitCode                                   # -> 0
 ```text
 [INFO] --- surefire:3.2.5:test (default-test) @ agent-cli ---
 [INFO] Running com.agent.AgentTest
-[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Running com.agent.ConsoleStreamsTest
+[INFO] Running com.agent.MainTest
+[INFO] Tests run: 53, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -535,6 +585,47 @@ git commit -m "stop tracking build output"
 ```
 
 `--cached` 只从版本库索引中移除文件、保留工作区的物理文件，因此本地产物不会被删除。
+
+### 问题 5：控制台输入中文返回 `???`（编码缺陷）
+
+**现象**：在中文 Windows 控制台输入 `你好`，程序输出 `I heard: ???`（本实验最初交付后由使用者报告）。
+
+**定位过程（用字节而不是肉眼判断）**：把标准输入重定向为 GBK 编码的文本，抓取输出原始字节：
+
+```text
+输入字节（GBK 编码的「你好」）: C4 E3 BA C3 0D 0A
+输出字节: 49 20 68 65 61 72 64 3A 20 3F 3F 3F 0D 0A   →  "I heard: ???"
+JVM 属性: file.encoding=UTF-8  native.encoding=GBK  stdin.encoding=GBK  stdout.encoding=GBK
+```
+
+**根因**：`new BufferedReader(new InputStreamReader(System.in))` 不指定字符集时使用**默认字符集**，
+而 JDK 18 起 `file.encoding` 被固定为 UTF-8；控制台给出的却是 GBK 字节（代码页 936）。用 UTF-8
+解码 GBK 字节会得到替换字符 U+FFFD，打印出来即 `???`。这是**输入侧的解码错误**，与 Lab02 的
+**输出侧编码错误**同源（`file.encoding` 与控制台编码不一致），只是方向相反。
+
+**解决**：新增 `com.agent.ConsoleStreams` 统一决定 stdin/stdout 的编码（规则见 README §5.1：
+显式 `-Dagent.encoding` > 非终端用 UTF-8 > 真实终端用控制台编码），`Main` 改为：
+
+```java
+ConsoleStreams.configureStdout();
+run(new Agent(), ConsoleStreams.newStdinReader(), System.out);
+```
+
+同时把 I/O 循环抽成 `run(Agent, BufferedReader, PrintStream)`，让这个缺陷可以用字节流在单元测试里
+复现并锁定（`MainTest.shouldEchoChineseTypedInGbkConsole`）。
+
+**验证（三个场景，均为字节级比对）**：
+
+| 场景 | 输入 | 实测结果 |
+|---|---|---|
+| 管道 / 重定向（按 UTF-8 约定） | UTF-8 字节的「你好」 | `I heard: 你好`，输出字节 `E4 BD A0 E5 A5 BD` |
+| GBK 控制台（`-Dagent.encoding=GBK`） | GBK 字节的「你好」 | `I heard: 你好`，输出字节 `C4 E3 BA C3` |
+| 对照：未声明编码 + GBK 字节 | GBK 字节的「你好」 | 仍为 `???` —— 重定向输入按 UTF-8 约定解释，可用 `-Dagent.encoding` 纠正 |
+
+**经验**：① 「乱码」必须先分清是输入侧还是输出侧 —— 判断依据应当是**字节**，不是肉眼；
+② `file.encoding`（文件读写）与 `stdin.encoding`/`stdout.encoding`（控制台）是两套东西，
+JDK 18 与 JDK 19 的两次改动让它们的默认值不再一致，这是本缺陷与本实验后续问题的共同根源；
+③ 固定任何单一编码都无法同时适配 GBK 控制台与 UTF-8 终端 / IDE，只能按环境推断并提供显式覆盖。
 
 ---
 
@@ -767,7 +858,7 @@ rm -rf target
 
 ## 11. 实验总结：从「写代码」到「管理软件项目」的认知转变
 
-1. **「代码正确」由证据定义，而不是由来源定义。** 无论代码来自 AI 还是来自自己，判定标准只有三类可检查的证据：编译通过、测试通过、命令行验收通过。本实验 9 个测试用例、4 项 AT 验收、3 种运行方式，构成的就是这份证据链。
+1. **「代码正确」由证据定义，而不是由来源定义。** 无论代码来自 AI 还是来自自己，判定标准只有三类可检查的证据：编译通过、测试通过、命令行验收通过。本工程 53 个测试用例、4 项 AT 验收、3 种运行方式，构成的就是这份证据链。
 2. **工程骨架决定了后续能走多远。** Lab01 只写了 20 余行业务代码，却建立了 `pom.xml`、目录约定、`.gitignore`、测试基线与首个提交。后续 Lab02 的 File Tool、Lab04 的 Tool Framework 都直接长在这套骨架上——这也解释了为什么指导书强调「V1 必须 `mvn test` 是绿的、Git 已提交，再进入下一实验」。
 3. **设计决定可测试性，可测试性决定能否安全使用 AI。** 把逻辑从 `main` 抽到 `Agent.respond` 这一步，让 AI 的产出从「只能靠人眼验收的脚本」变成了「可被自动化拦截的构件」。这个决定的价值在后续引入 LLM 时会进一步放大：模型输出不确定，所以必须靠不变量式的测试（是否调用了正确工具、是否在预算内终止）来约束。
 4. **AI 协作的正确姿态是「审查 + 验证 + 修改」，而非「接受 + 运行」。** 本实验中最真实的一课是：AI 生成的 `Agent` 与 `Main` 结构上完全正确，却因为一个**空文件**而整体不可编译（§8 问题 1）；AI 生成的测试断言顺序正确、命名合理，却漏掉了 `null` 与大小写分支（§5.3）。两处缺口都不是靠「让 AI 再检查一遍」发现的，而是靠**跑构建**和**人工比对分支表**发现的。
@@ -802,6 +893,6 @@ git check-ignore -v target
 V1
 ├── Maven Project  ✅  com.agent:agent-cli:0.1.0，release 17，JUnit 5.10.2 (test)
 ├── Java CLI        ✅  Agent（逻辑）+ Main（I/O 接线），支持 hello / 空白 / 回显 / quit
-├── Test            ✅  9 个用例全通过（Tests run: 9, Failures: 0, Errors: 0）
+├── Test            ✅  53 个用例全通过（Tests run: 53, Failures: 0, Errors: 0）
 └── Git             ✅  a9464e7 bootstrap project / d06b5ff 补充边界测试与文档
 ```

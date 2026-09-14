@@ -23,6 +23,7 @@ agent-cli/
 └── src/
     ├── main/java/com/agent/
     │   ├── Agent.java
+    │   ├── ConsoleStreams.java
     │   ├── Main.java
     │   └── tool/
     │       ├── FileToolsDemo.java
@@ -32,8 +33,9 @@ agent-cli/
     │       └── SearchCodeTool.java
     └── test/java/com/agent/
         ├── AgentTest.java
+        ├── ConsoleStreamsTest.java
+        ├── MainTest.java
         └── tool/
-            ├── FileToolsDemoTest.java
             ├── IgnoreRulesTest.java
             ├── ListFilesToolTest.java
             ├── ReadFileToolTest.java
@@ -45,6 +47,8 @@ agent-cli/
 | `Agent` | 纯逻辑：`respond(String)` 决定「输入 → 响应」，不接触键盘与屏幕，可直接单元测试 |
 | `Main` | I/O 接线：从 stdin 逐行读取，交给 `Agent`，再打印到 stdout |
 | `AgentTest` | 用 JUnit 5 验证 `Agent.respond` 的各分支与边界 |
+| `ConsoleStreams` | 按运行环境选择 stdin/stdout 编码（显式指定 > 非终端用 UTF-8 > 终端用控制台编码） |
+| `MainTest` | 用字节流模拟 GBK / UTF-8 控制台输入，锁定中文输入与 `quit` 行为 |
 | `ListFilesTool` | 递归列出目录文件；支持最大深度与树形输出；返回 `List<String>` |
 | `ReadFileTool` | 读取 UTF-8 文本文件；支持 `offset`/`limit` 分页；返回 `String` |
 | `SearchCodeTool` | 搜索包含关键字/正则的行；返回 `List<Match>`（文件 + 行号 + 内容） |
@@ -102,6 +106,25 @@ Windows PowerShell：
 
 结束交互式输入：macOS / Linux 按 `Ctrl + D`，Windows PowerShell 按 `Ctrl + Z` 后回车。
 
+### 5.1 中文输入与输出编码
+
+CLI 与 Demo 共用 `com.agent.ConsoleStreams` 处理控制台编码：JDK 18 起 `file.encoding` 固定为
+UTF-8，但 JDK 19 起 `System.in`/`System.out` 使用 `stdin.encoding`/`stdout.encoding`
+（Windows 上等于控制台代码页，简体中文环境通常是 GBK），直接使用默认字符集会同时导致
+**输入乱码**（`你好` 变成 `???`）与**输出乱码**。选择规则：
+
+| 运行环境 | 选用编码 |
+|---|---|
+| 显式指定 `-Dagent.encoding=UTF-8`（或 `GBK`） | 以该值为准，优先级最高 |
+| 输出被重定向 / 管道 / IDE 运行窗口 / CI 捕获 | UTF-8 |
+| 连接到真实终端（PowerShell、cmd、Windows Terminal） | 终端代码页对应的编码（中文 Windows 通常是 GBK） |
+
+若终端显示中文异常，用系统属性强制指定即可：
+
+```powershell
+java '-Dagent.encoding=GBK' -cp target/classes com.agent.Main
+```
+
 ## 6. File Tools（Lab 02）
 
 三个 Tool 让 Agent 具备「读 / 搜索项目代码」的能力。方法签名刻意保持不统一，
@@ -125,15 +148,7 @@ java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO   # 列文�
 java -cp target/classes com.agent.tool.FileToolsDemo --tree           # 树形列出项目文件
 ```
 
-Demo 的输出编码会**按运行环境自适应**（见 `FileToolsDemo.configureStdout()`）：Windows 上
-JDK 19+ 的 `stdout.encoding` 跟随控制台代码页（简体中文环境通常是 GBK），只要「写出的字节」与
-「终端解码的方式」不一致，中文就会乱码，而写死任何一种编码都必然在另一种终端上出错。因此：
-
-| 运行环境 | 选用编码 |
-|---|---|
-| 输出被重定向 / 管道 / IDE 运行窗口 / CI 捕获 | UTF-8 |
-| 连接到真实终端（PowerShell、cmd、Windows Terminal） | 终端代码页对应的编码（中文 Windows 通常是 GBK） |
-| 显式指定 `-Ddemo.encoding=UTF-8`（或 GBK） | 以该值为准，优先级最高 |
+Demo 的输出编码按运行环境自适应（见 `com.agent.ConsoleStreams`，规则见 §5.1）。
 
 Demo 的第一行会打印实际生效的编码，便于排查：
 
@@ -145,7 +160,7 @@ Demo 的第一行会打印实际生效的编码，便于排查：
 如果仍显示乱码，按需要显式覆盖（PowerShell 下 `-D` 参数要加引号，否则会被拆成两个参数）：
 
 ```powershell
-java '-Ddemo.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
+java '-Dagent.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
 ```
 
 ### 6.2 忽略规则 `.agentignore`
