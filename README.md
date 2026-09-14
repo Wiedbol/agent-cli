@@ -124,11 +124,16 @@ java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO   # 列文�
 java -cp target/classes com.agent.tool.FileToolsDemo --tree           # 树形列出项目文件
 ```
 
-Windows PowerShell 控制台默认是 GBK，直接运行会让中文输出显示为乱码（文件读取本身是正确的
-UTF-8）。加一个参数即可正常显示：
+Demo 入口会把标准输出固定为 UTF-8（见 `FileToolsDemo.useUtf8Stdout()`），因为 Windows 上
+JDK 19+ 的 `stdout.encoding` 默认跟随控制台代码页（简体中文环境通常是 GBK），会导致「Java 按
+GBK 写、终端按 UTF-8 读」的中文乱码。固定为 UTF-8 后，Windows Terminal / PowerShell 7 /
+VS Code / IDEA / macOS / Linux 都能正常显示。
+
+若你的终端仍在使用旧代码页（未执行 `chcp 65001` 的 cmd.exe），先切换代码页再运行：
 
 ```powershell
-java '-Dstdout.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
+chcp 65001
+java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
 ```
 
 ### 6.2 忽略规则 `.agentignore`

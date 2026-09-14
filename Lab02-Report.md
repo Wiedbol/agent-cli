@@ -532,20 +532,44 @@ target/          ← 以 / 结尾 = 目录名规则：该目录及其内容全�
 
 ### 问题 5：Windows GBK 控制台把中文输出显示成乱码
 
-**现象**：Demo 打印 `README.md` 内容时，终端上是 `Lab 01 �� V1 ���̻���...`。
+**现象**：Demo 打印 `README.md` 内容时，终端上是 `Lab 01 �� V1 ���̻���...`（用户实际操作时报告的现象）。
 
-**根因**：文件本身是 UTF-8，`ReadFileTool` 也按 UTF-8 正确读取；乱码发生在**输出侧**——Windows 控制台默认代码页是 GBK（936），JVM 的 `stdout.encoding` 随之为 GBK，中文 UTF-8 字节被按 GBK 解码显示。
+**定位过程（用字节而不是肉眼判断）**：把 Demo 的 stdout 重定向到文件后直接看原始字节，分别按两种编码解码同一行：
 
-**解决与验证**：
-
-```powershell
-java '-Dstdout.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo README.md
-# 输出正确：Lab 01 的 V1 工程基础：一个 Java 17 + Maven 的命令行程序...
+```text
+按 UTF-8 解码: Lab 01 �� V1 ���̻�����һ�� Java 17 + Maven ...     ← 乱码
+按 GBK   解码: Lab 01 的 V1 工程基础：一个 Java 17 + Maven ...     ← 正确
 ```
 
-顺带踩到 PowerShell 的坑：`-Dstdout.encoding=UTF-8` 不加引号会被拆成两个参数（报 `ClassNotFoundException: /encoding=UTF-8`），必须写成 `'-Dstdout.encoding=UTF-8'`。
+同时查看 JVM 属性：
 
-**结论**：乱码是**终端显示**问题，不是 Tool 的数据问题；`ReadFileTool` 的行为由 `shouldReadUtf8Content`（`"你好，Agent！"`）用例保证。
+```text
+file.encoding   = UTF-8     ← 文件读写用的字符集（JDK 18+ 固定为 UTF-8）
+native.encoding = GBK
+stdout.encoding = GBK       ← 关键：System.out 跟随控制台代码页
+```
+
+**根因**：文件本身是 UTF-8，`ReadFileTool` 也按 UTF-8 正确读取（`shouldReadUtf8Content` 用例可证）；乱码只发生在**输出侧**——JDK 19 起 `System.out` 使用 `stdout.encoding`（Windows 上默认等于控制台代码页 GBK）而非 `file.encoding`，于是 Java 写出 GBK 字节，而现代终端（Windows Terminal / VS Code / IDEA）按 UTF-8 解码。
+
+**解决**：在 Demo 入口把标准输出固定为 UTF-8，直接写入 `FileDescriptor.out` 以绕开 `System.out` 自带的编码器：
+
+```java
+private static void useUtf8Stdout() {
+    System.setOut(new PrintStream(
+            new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8));
+}
+```
+
+**验证（修复后同样用字节比对）**：
+
+```text
+按 UTF-8 解码: Lab 01 的 V1 工程基础：一个 Java 17 + Maven ...     ← 正确
+按 GBK   解码: Lab 01 鐨?V1 宸ョ▼鍩虹...                            ← 反而乱码，说明字节确已变为 UTF-8
+```
+
+补充两点：① 若在未执行 `chcp 65001` 的旧式 cmd.exe 中运行，仍需先切换代码页；② 过程中踩到一个 PowerShell 坑——`-Dstdout.encoding=UTF-8` 不加引号会被拆成两个参数（报 `ClassNotFoundException: /encoding=UTF-8`），必须写成 `'-Dstdout.encoding=UTF-8'`，这也是最终选择「在代码里固定编码」而不是「依赖命令行参数」的原因之一。
+
+**结论**：乱码是**输出编码**问题，不是 Tool 的数据问题；`ReadFileTool` 的正确性由 `shouldReadUtf8Content`（`"你好，Agent！"`）用例保证，输出编码则由 Demo 入口统一固定。
 
 ### 问题 6：`Files.walk` 的 Stream 与文件句柄
 
@@ -783,7 +807,7 @@ mvn clean test                                                    # 41 个测试
 mvn -q -DskipTests compile
 java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
 java -cp target/classes com.agent.tool.FileToolsDemo --tree
-java '-Dstdout.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo README.md   # PowerShell 下中文输出
+java -cp target/classes com.agent.tool.FileToolsDemo README.md   # 中文输出已由 Demo 内部固定为 UTF-8
 ```
 
 ## 附录 C：V2 验收清单
