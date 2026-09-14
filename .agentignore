@@ -1,0 +1,20 @@
+# File Tool 的忽略规则（.gitignore 风格）
+# 空行与 # 开头的行会被忽略；以 / 结尾表示目录名；其它规则按 glob 匹配文件名与相对路径。
+
+# 构建产物与工具元数据
+target/
+.git/
+.idea/
+.vscode/
+node_modules/
+
+# 二进制与归档文件
+*.class
+*.jar
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.zip
+.DS_Store
