@@ -13,20 +13,7 @@
 
 ## 1. 实验目的
 
-本实验不以「功能复杂」为目标，而以「工程闭环完整」为目标，建立后续所有 Agent 实验的工程地基。完成后应达成：
-
-- **LO1（Java 工程开发能力）**
-  - 能创建一个符合「约定优于配置」的标准 Maven 项目（`src/main/java`、`src/test/java`、`pom.xml`）；
-  - 能用 `maven.compiler.release=17` 精确控制字节码版本，使工程在 Java 17 运行时可用；
-  - 能用 Maven 的 `compile → test → package` 生命周期完成构建与自动化测试；
-  - 能用 Git 完成 `init → add → commit` 的版本管理，并理解 `.gitignore` 的作用。
-- **LO5（AI 辅助开发能力）**
-  - 能用自然语言描述开发需求，让 AI 生成可运行的工程骨架与代码；
-  - 能**读懂**AI 生成的 `pom.xml`、`Agent`、`Main`、`AgentTest`，而不是照单全收；
-  - 能用**测试与命令行**验证 AI 生成物，并对不合理处做人工修改；
-  - 能保留 `Prompt → AI 输出 → 人工审查 → 测试验证 → 修改` 的完整证据链。
-
-一句话总结：本实验要证明的不是「AI 会写代码」，而是「我理解并验证了 AI 写的代码」。
+本实验不以「功能复杂」为目标，而以「工程闭环完整」为目标，建立后续所有 Agent 实验的工程地基。本实验要证明的不是「AI 会写代码」，而是「我理解并验证了 AI 写的代码」。
 
 ---
 
@@ -264,21 +251,13 @@ public class Main {
 
 **Read → Understand（人工审查）**
 
-审查结论：AI 的分层是**正确**的——业务判断只出现在 `Agent`，`Main` 只有「读一行 → 交给 Agent → 打印」的接线；`respond` 返回 `String` 而不是直接 `System.out.println`，这正是可测试性的关键。
-
-但审查同时发现了一个真实问题：工程中的 `Agent.java` 是一个 **0 字节的空文件**，而 `Main.java` 已经在引用 `Agent`。直接构建会失败：
+审查结论：AI 的分层是正确的，业务判断只出现在 `Agent`，`Main` 只有「读一行 → 交给 Agent → 打印」的接线；`respond` 返回 `String` 而不是直接 `System.out.println`，这正是可测试性的关键。
 
 ```text
 [ERROR] /E:/agent-cli/src/main/java/com/agent/Main.java:[10,9] 无法访问com.agent.Agent
 [ERROR]   错误的源文件: E:\agent-cli\src\main\java\com\agent\Agent.java
 [ERROR]     文件不包含类com.agent.Agent
 ```
-
-**问题的根因**：Java 编译器的规则是「public 类必须放在与类名同名的 `.java` 文件中」。当 `Main` 引用 `com.agent.Agent`，javac 会在 `com/agent/` 下寻找 `Agent.java` 并**按文件名推断类名**，结果该文件里没有任何类声明，于是报「文件不包含类 com.agent.Agent」。这不是类名拼写错误，而是**文件内容缺失**。
-
-**我的修改**
-
-按 `AgentTest` 已经约定好的行为契约补全 `Agent.java`：
 
 | 输入 | 期望输出 |
 |---|---|
@@ -859,46 +838,3 @@ rm -rf target
 | 挑战 1 | `mvn package` 打成可执行 jar | ✅ | 清单 `Main-Class: com.agent.Main`；`java -jar target/agent-cli-0.1.0.jar` 可用 |
 | 挑战 2 | 配置 `exec-maven-plugin`，`mvn exec:java` 直接运行 | ✅ | `exec-maven-plugin 3.2.0`；`"hello" \| mvn -q exec:java` → `Hello, Agent!` |
 | 挑战 3 | `--upper` 参数把输出转大写 | ⬜ 未实现 | 会改变 `Agent` 的公开 API 与 CLI 行为契约，需与后续实验的参数解析设计一并考虑 |
-
----
-
-## 11. 实验总结：从「写代码」到「管理软件项目」的认知转变
-
-1. **「代码正确」由证据定义，而不是由来源定义。** 无论代码来自 AI 还是来自自己，判定标准只有三类可检查的证据：编译通过、测试通过、命令行验收通过。本工程 52 个测试用例、4 项 AT 验收、3 种运行方式，构成的就是这份证据链。
-2. **工程骨架决定了后续能走多远。** Lab01 只写了 20 余行业务代码，却建立了 `pom.xml`、目录约定、`.gitignore`、测试基线与首个提交。后续 Lab02 的 File Tool、Lab04 的 Tool Framework 都直接长在这套骨架上——这也解释了为什么指导书强调「V1 必须 `mvn test` 是绿的、Git 已提交，再进入下一实验」。
-3. **设计决定可测试性，可测试性决定能否安全使用 AI。** 把逻辑从 `main` 抽到 `Agent.respond` 这一步，让 AI 的产出从「只能靠人眼验收的脚本」变成了「可被自动化拦截的构件」。这个决定的价值在后续引入 LLM 时会进一步放大：模型输出不确定，所以必须靠不变量式的测试（是否调用了正确工具、是否在预算内终止）来约束。
-4. **AI 协作的正确姿态是「审查 + 验证 + 修改」，而非「接受 + 运行」。** 本实验中最真实的一课是：AI 生成的 `Agent` 与 `Main` 结构上完全正确，却因为一个**空文件**而整体不可编译（§8 问题 1）；AI 生成的测试断言顺序正确、命名合理，却漏掉了 `null` 与大小写分支（§5.3）。两处缺口都不是靠「让 AI 再检查一遍」发现的，而是靠**跑构建**和**人工比对分支表**发现的。
-5. **版本控制是「可回退的安全感」。** 有了 `a9464e7 bootstrap project` 这个检查点，后续任何 AI 大范围改写都可以随时对比与回退；`.gitignore` 让仓库只保存「人写的、需要被 review 的」内容，而不保存机器的中间产物。这就是从「写代码」转向「管理软件项目」最直观的一步——你管理的不只是文件，而是**可复现的构建、可回退的历史、可执行的规格**。
-
----
-
-## 附录 A：常用命令速查
-
-```bash
-# 构建与测试
-mvn clean test                    # 清理 + 编译 + 单元测试
-mvn -q -DskipTests compile        # 只编译（静默）
-mvn -DskipTests package           # 打包出 target/agent-cli-0.1.0.jar
-
-# 运行
-mvn -q exec:java                                         # 推荐：exec-maven-plugin
-java -cp target/classes com.agent.Main                   # classpath 方式
-java -jar target/agent-cli-0.1.0.jar                     # 可执行 jar
-"hello" | java -cp target/classes com.agent.Main         # Windows PowerShell 管道
-echo "hello" | java -cp target/classes com.agent.Main    # macOS / Linux 管道
-
-# 版本控制
-git log --oneline
-git status
-git check-ignore -v target
-```
-
-## 附录 B：验收清单
-
-```text
-V1
-├── Maven Project  ✅  com.agent:agent-cli:0.1.0，release 17，JUnit 5.10.2 (test)
-├── Java CLI        ✅  Agent（逻辑）+ Main（I/O 接线），支持 hello / 空白 / 回显 / quit
-├── Test            ✅  52 个用例全通过（Tests run: 52, Failures: 0, Errors: 0）
-└── Git             ✅  a9464e7 bootstrap project / d06b5ff 补充边界测试与文档
-```

@@ -16,20 +16,7 @@
 
 ## 1. 实验目的
 
-本实验在 V1 之上让 Agent 第一次获得「读取与搜索项目文件」的能力，达成的能力如下。
-
-- **LO2（Agent Tool 开发能力）**
-  - 用 Java NIO（`Path` / `Files`）而不是老的 `java.io.File` 完成文件操作；
-  - 用 `Files.walk` 递归遍历目录，并用 try-with-resources 管理 `Stream<Path>` 底层句柄；
-  - 用 `Files.readString` / `Files.newBufferedReader` 读取文本，并用 `@TempDir` 构造隔离的测试夹具；
-  - 处理文件异常：区分「参数非法」与「路径不存在或不是文件」，单个文件读取失败时跳过而不中断整体搜索；
-  - 把功能封装为职责单一的独立 Tool，且三个 Tool 之间互不依赖。
-- **LO5（AI 辅助开发能力）**
-  - 用自然语言描述 Tool 的需求并让 AI 生成代码；
-  - 审查 AI 生成的文件操作代码，识别出**忽略规则硬编码、平台分隔符、静默吞异常、重载歧义**等问题；
-  - 用 `@TempDir` 单元测试与命令行 Demo 双重验证 Tool，并记录 `Prompt → AI 输出 → 人工审查 → 测试验证 → 修改` 的完整证据。
-
-一句话总结：Lab 01 证明了「AI 写的代码可以被测试验证」，Lab 02 开始验证「AI 写的**文件操作**代码是否真的安全、可移植、可维护」。
+本实验在 V1 之上让 Agent 第一次获得「读取与搜索项目文件」的能力。
 
 ---
 
@@ -42,15 +29,6 @@ java -version   ->  java version "22.0.2" 2024-07-16
 mvn -version    ->  Apache Maven 3.9.16 (Java version: 22.0.2)
 git --version   ->  git version 2.47.1.windows.1
 ```
-
-起步检查（对应实验 §4.3）：
-
-| 检查项 | 结果 |
-|---|---|
-| `cd` 到 V1 项目目录 | ✅ `E:\agent-cli` |
-| 工作区是否干净 | ✅ `git status --short` 无输出，HEAD = `25ac774` |
-| 基线测试 | ✅ Lab01 的 `AgentTest` 9 个用例在本次第一次 `mvn clean test` 中与新增用例一并执行、全部通过（见 §6.1） |
-| 构建是否使用 release 17 | ✅ 日志 `Compiling 7 source files with javac [debug release 17]` |
 
 ---
 
@@ -786,72 +764,3 @@ public record Match(String file, int line, String content) {
 5. **互相干扰与顺序依赖**：多个测试写同一个真实目录时会互相踩踏，出现「单独跑过、一起跑失败」的偶发问题。
 
 一句话：**测试应该验证代码的行为，而不是验证当前这台机器上的文件长什么样**。`@TempDir` 提供了一块「可以随意破坏」的沙盒，让正常路径与异常路径都能被稳定、可重复地验证——这也是实验评分里「`@TempDir` 夹具覆盖正常与异常路径、`mvn test` 可重复」这一项的直接依据。
-
----
-
-## 10. 选做与挑战任务完成情况
-
-| 任务 | 内容 | 状态 | 证据 |
-|---|---|:---:|---|
-| 必做 1–3 | `ListFilesTool` / `ReadFileTool` / `SearchCodeTool` | ✅ | `src/main/java/com/agent/tool/` 三个 Tool，签名与实验要求一致（`searchCode` 接收 `keyword` + `path`） |
-| 必做 4 | 每个 Tool 配 JUnit 测试（`@TempDir`） | ✅ | 4 个 Tool 测试类、32 个 `@TempDir` 用例（工程总计 52 个） |
-| 必做 5 | Git 增量提交 | ✅ | `7e7179d lab02: file tools` |
-| 选做 1 | `ListFilesTool` 最大深度参数 | ✅ | `listFiles(root, maxDepth)` + `shouldRespectMaxDepth` |
-| 选做 2 | `SearchCodeTool` 正则匹配 | ✅ | `searchCodeRegex(Pattern, root)` + `shouldSupportRegexSearch` |
-| 选做 3 | 忽略列表抽为配置（`.gitignore` 风格） | ✅ | `.agentignore` + `IgnoreRules`（目录规则 / glob 规则）+ `IgnoreRulesTest` 5 个用例 |
-| 挑战 1 | `ListFilesTool` 树形结构输出 | ✅ | `tree(root)` + `shouldRenderTreeWithIndentation` + Demo `--tree` |
-| 挑战 2 | `ReadFileTool` 分页读取（`offset` + `limit`） | ✅ | `readFile(path, offset, limit)`（`BufferedReader` 流式）+ 4 个分页用例 |
-| 挑战 3 | 预判 `String execute(String args)` 的序列化方案 | ✅ 已作答 | §9.3：三种返回类型分别序列化为「每行一个路径」「原样文本」「`文件:行号: 内容`」，并用 `ToolResult` 统一成败 |
-
----
-
-## 11. 实验总结
-
-1. **「LLM ≠ 文件系统」是本实验最核心的认知。** 模型再强，它的世界也只有上下文窗口；项目代码要进入它的视野，必须由 Tool 把磁盘上的字节变成文本。这条边界决定了 Agent 架构的分工：**决策（概率）交给 LLM，执行（确定）交给 Tool**。
-2. **文件操作的正确性必须靠测试来定义，而不是靠「跑一次试试」。** 本实验 32 个 Tool 用例里有一半是异常与边界路径：文件不存在、路径是目录、非法 UTF-8、不可解码文件、`target/` 内的 `.java`、空关键字、负深度、`limit <= 0`，以及编码在不同终端下的选择规则。这些都是「手跑一次 Demo 永远不会碰到、但线上一定会碰到」的场景。`@TempDir` 让它们可以在 0.2 秒内被反复验证。
-3. **AI 生成的代码「结构对」但「边界糊」。** 三次 AI 任务的审查结论高度一致：AI 都很熟练地写出了 `Files.walk` + `try-with-resources` + `relativize` 的主干，但都在**边界**上偷懒 —— 忽略规则硬编码且语义混淆（`.DS_Store` 混进扩展名列表）、`Path::toString` 的平台差异、`catch (IOException ignored)` 静默吞掉一切、重载带来的调用歧义。这些都不是「语法错误」，编译器与 AI 自己都发现不了，只有把需求逐条拆成检查项（是否递归？是否过滤目录？失败是否中断？）才能审出来。
-4. **异常设计是接口设计的一部分。** 这次特意区分了 `NoSuchFileException`（环境问题，可被调用方降级处理）与 `IllegalArgumentException`（调用方参数错误，必须立即暴露），并把「单文件失败跳过、整体失败报错」作为两条不同的策略固定下来。这为 Lab04 把异常统一包装成 `ToolResult(success=false)` 打好了基础。
-5. **「先做对、再做统一」的顺序是对的。** 本实验刻意保留三个 Tool 签名不一致的技术债，用真实的痛点（写不出统一循环、没法统一生成 LLM 工具描述、异常契约各写一套、重载歧义）说明 Lab04 的 `Tool` 接口不是形式主义。抽象应当由痛点驱动，而不是先有接口再硬塞实现。
-6. **平台无关性是可以「设计出来」的。** 用 `Path` 而不是字符串拼路径、在 Tool 输出边界统一 `/`、用 UTF-8 显式读写、用 `\n` 而非 `System.lineSeparator()` 做分页输出 —— 这些选择让同一份代码在 Windows 与 macOS 上行为一致，也顺手避免了「测试断言依赖平台」这一常见坑。
-
----
-
-## 附录 A：Lab 02 新增/变更文件清单
-
-```text
-新增
-  .agentignore
-  src/main/java/com/agent/tool/IgnoreRules.java
-  src/main/java/com/agent/tool/ListFilesTool.java
-  src/main/java/com/agent/tool/ReadFileTool.java
-  src/main/java/com/agent/tool/SearchCodeTool.java
-  src/main/java/com/agent/tool/FileToolsDemo.java
-  src/test/java/com/agent/tool/IgnoreRulesTest.java
-  src/test/java/com/agent/tool/ListFilesToolTest.java
-  src/test/java/com/agent/tool/ReadFileToolTest.java
-  src/test/java/com/agent/tool/SearchCodeToolTest.java
-变更
-  README.md（新增 File Tools 章节与工具签名表）
-```
-
-## 附录 B：常用命令
-
-```bash
-mvn clean test                                                    # 52 个测试
-mvn -q -DskipTests compile
-java -cp target/classes com.agent.tool.FileToolsDemo README.md TODO
-java -cp target/classes com.agent.tool.FileToolsDemo --tree
-java -cp target/classes com.agent.tool.FileToolsDemo README.md   # 中文输出已由 Demo 内部固定为 UTF-8
-```
-
-## 附录 C：V2 验收清单
-
-```text
-V2
-├── Java CLI        ✅  Main / Agent（Lab01 回归测试 9 个用例通过）
-├── ListFilesTool   ✅  递归 + 忽略规则 + 深度限制 + 树形输出
-├── ReadFileTool    ✅  UTF-8 + 明确异常 + 流式分页
-├── SearchCodeTool  ✅  子目录 + 跳过二进制/忽略目录 + 文件:行号:内容 + 正则
-├── Test            ✅  52 个用例全通过（Tests run: 52, Failures: 0, Errors: 0）
-└── Git             ✅  7e7179d lab02: file tools
-```
