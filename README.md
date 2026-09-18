@@ -178,3 +178,4 @@ Tool 遍历目录时按项目根目录的 `.agentignore` 跳过文件，语法�
 
 - [Lab01-Report.md](Lab01-Report.md)：Java Project Bootstrap（V1）
 - [Lab02-Report.md](Lab02-Report.md)：File Tools（V2）
+- [HANDOFF.md](HANDOFF.md)：任务交接文档（工程现状、设计决策与坑位、已知问题、下一步）
