@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
 
 /**
- * 统一处理命令行程序的字符编码问题（stdin 解码与 stdout 编码）。
+ * 统一处理命令行程序的字符编码问题（stdin 解码与 stdout / stderr 编码）。
  *
  * <p><b>问题背景</b>：JDK 18 起 {@code file.encoding} 固定为 UTF-8，但 JDK 19 起
  * {@code System.in} / {@code System.out} 使用 {@code stdin.encoding} / {@code stdout.encoding}
@@ -78,6 +78,18 @@ public final class ConsoleStreams {
     }
 
     /**
+     * 写出标准错误时应使用的编码。
+     *
+     * <p>与 {@link #stdoutCharset()} 用同一套优先级，避免出现
+     * 「{@code -Dagent.encoding=UTF-8} 之后 stdout 正常、stderr 仍然乱码」这种只修一半的情况。
+     */
+    public static Charset stderrCharset() {
+        return charset(System.getProperty(ENCODING_PROPERTY),
+                System.getProperty("stderr.encoding"),
+                nativeCharset());
+    }
+
+    /**
      * 创建按环境正确解码的标准输入读取器。
      *
      * <p>与直接 {@code new BufferedReader(new InputStreamReader(System.in))} 的区别在于：
@@ -96,6 +108,17 @@ public final class ConsoleStreams {
     public static Charset configureStdout() {
         Charset charset = stdoutCharset();
         System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, charset));
+        return charset;
+    }
+
+    /**
+     * 按环境重建 {@link System#err}，规则与 {@link #configureStdout()} 相同。
+     *
+     * @return 实际生效的错误输出编码
+     */
+    public static Charset configureStderr() {
+        Charset charset = stderrCharset();
+        System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, charset));
         return charset;
     }
 

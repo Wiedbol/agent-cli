@@ -20,35 +20,58 @@ agent-cli/
 ├── .gitignore
 ├── pom.xml
 ├── README.md
+├── scripts/verify-deepseek.ps1        # Lab03 联网验收脚本
 └── src/
     ├── main/java/com/agent/
     │   ├── Agent.java
     │   ├── ConsoleStreams.java
     │   ├── Main.java
+    │   ├── llm/
+    │   │   ├── LLMClient.java          # 模型客户端接口（依赖倒置的边界）
+    │   │   ├── DeepSeekClient.java     # Chat Completions 实现
+    │   │   ├── Message.java            # 四种角色的历史消息
+    │   │   ├── ToolCall.java           # 工具调用意图
+    │   │   ├── LLMResponse.java        # 归一化响应
+    │   │   └── ApiKeyLoader.java       # .env / 环境变量读取
     │   └── tool/
     │       ├── FileToolsDemo.java
     │       ├── IgnoreRules.java
     │       ├── ListFilesTool.java
     │       ├── ReadFileTool.java
-    │       └── SearchCodeTool.java
+    │       ├── SearchCodeTool.java
+    │       └── ToolRegistry.java       # 把三个 File Tool 适配成 Tool Calling 协议
     └── test/java/com/agent/
         ├── AgentTest.java
         ├── ConsoleStreamsTest.java
         ├── MainTest.java
+        ├── ReActAgentTest.java
+        ├── llm/
+        │   ├── FakeLLMClient.java      # 离线测试替身
+        │   ├── MessageTest.java
+        │   ├── LLMResponseTest.java
+        │   ├── DeepSeekClientTest.java # MockWebServer 离线协议验证
+        │   └── ApiKeyLoaderTest.java
         └── tool/
             ├── IgnoreRulesTest.java
             ├── ListFilesToolTest.java
             ├── ReadFileToolTest.java
-            └── SearchCodeToolTest.java
+            ├── SearchCodeToolTest.java
+            └── ToolRegistryTest.java
 ```
 
 | 类 | 职责 |
 |---|---|
-| `Agent` | 纯逻辑：`respond(String)` 决定「输入 → 响应」，不接触键盘与屏幕，可直接单元测试 |
-| `Main` | I/O 接线：从 stdin 逐行读取，交给 `Agent`，再打印到 stdout |
+| `Agent` | 本地模式：`respond(String)` 决定「输入 → 响应」；模型模式：`run(String)` 执行 ReAct 循环 |
+| `Main` | I/O 接线：加载 Key、创建对象、逐行读取 stdin，再打印到 stdout（`--upper` 支持输出转大写） |
 | `AgentTest` | 用 JUnit 5 验证 `Agent.respond` 的各分支与边界 |
 | `ConsoleStreams` | 按运行环境选择 stdin/stdout 编码（显式指定 > 非终端用 UTF-8 > 终端用控制台编码） |
 | `MainTest` | 用字节流模拟 GBK / UTF-8 控制台输入，锁定中文输入与 `quit` 行为 |
+| `LLMClient` | 模型客户端接口：`chat(messages, tools)` → `LLMResponse`，让 Agent 与具体厂商解耦 |
+| `DeepSeekClient` | OkHttp + Jackson 实现：请求构造、Bearer 鉴权、响应解析、401/429/5xx 诊断 |
+| `Message` / `ToolCall` / `LLMResponse` | Tool Calling 的数据模型：四种角色、调用意图、`hasToolCalls()` 判据 |
+| `ApiKeyLoader` | `.env` 优先、环境变量兜底；`.env` 必须留在 `.gitignore` 中 |
+| `ToolRegistry` | 向模型描述工具、解析参数、复用 Lab02 三个 File Tool，并把失败转成错误 Observation |
+| `ReActAgentTest` | 用 `FakeLLMClient` 离线验证循环退出、Observation 回传、`MAX_ITERATIONS` 与历史清空 |
 | `ListFilesTool` | 递归列出目录文件；支持最大深度与树形输出；返回 `List<String>` |
 | `ReadFileTool` | 读取 UTF-8 文本文件；支持 `offset`/`limit` 分页；返回 `String` |
 | `SearchCodeTool` | 搜索包含关键字/正则的行；返回 `List<Match>`（文件 + 行号 + 内容） |
@@ -58,9 +81,9 @@ agent-cli/
 ## 3. 构建与测试
 
 ```bash
-mvn test          # 编译 + 运行单元测试，必须 BUILD SUCCESS 且 Failures: 0
+mvn test          # 编译 + 运行单元测试（当前 107 个用例），必须 BUILD SUCCESS 且 Failures: 0
 mvn clean test    # 清理 target/ 后重新构建
-mvn package       # 生成 target/agent-cli-0.1.0.jar（清单已配置 Main-Class）
+mvn package       # 生成 target/agent-cli-0.1.0.jar（含依赖的 fat jar，清单已配置 Main-Class）
 ```
 
 ## 4. 运行 CLI
@@ -79,6 +102,12 @@ java -cp target/classes com.agent.Main
 
 mvn -q -DskipTests package
 java -jar target/agent-cli-0.1.0.jar
+```
+
+`--upper`（Lab01 挑战任务 3）把输出统一转成大写：
+
+```bash
+java -jar target/agent-cli-0.1.0.jar --upper
 ```
 
 管道方式（一行输入 → 一行输出）：
@@ -103,6 +132,8 @@ Windows PowerShell：
 | 空行 / 纯空白 / 无输入（EOF） | `Hello, Agent!` |
 | 其它内容（原样回显） | `I heard: <输入>` |
 | `quit`（忽略大小写与首尾空白） | 程序退出 |
+| `exit` | 与 `quit` 等价 |
+| `clear` | 清空对话历史（模型模式下只保留 system 提示词） |
 
 结束交互式输入：macOS / Linux 按 `Ctrl + D`，Windows PowerShell 按 `Ctrl + Z` 后回车。
 
@@ -174,8 +205,94 @@ Tool 遍历目录时按项目根目录的 `.agentignore` 跳过文件，语法�
 其余按 glob 同时匹配文件名与相对路径（如 `*.class`、`build/**`）。配置文件不存在时使用
 `IgnoreRules.defaults()` 兜底。
 
-## 7. 实验报告
+## 7. LLM Agent（Lab 03）
+
+三个 File Tool 从「用户直接调用」升级为「模型自主选择并调用」：
+
+```text
+用户 ──► Agent ──► DeepSeek ──Tool Calling──► File Tools
+ ▲                                                │
+ └──────────── 最终回答 ◄── Observation ◄─────────┘
+```
+
+| 组件 | 职责 | 不负责 |
+|---|---|---|
+| `DeepSeekClient` | HTTP 通信与 JSON ↔ 对象转换 | 执行工具、控制循环 |
+| `ToolRegistry` | 描述 / 查找 / 执行工具 | 决定下一步调用哪个工具 |
+| `Agent` | 维护消息历史、控制 ReAct 循环 | 读文件、发 HTTP |
+| `Main` | 加载配置、创建对象、CLI 交互 | 业务规则 |
+
+### 7.1 配置 DeepSeek
+
+在仓库根目录创建 `.env`（已被 `.gitignore` 忽略，切勿提交）：
+
+```powershell
+[IO.File]::WriteAllText("$PWD\.env", "DEEPSEEK_API_KEY=你的真实Key")
+```
+
+也可以改用环境变量 `DEEPSEEK_API_KEY`。可选覆盖项：
+
+| 目的 | 系统属性 | 环境变量 |
+|---|---|---|
+| 接口地址 | `-Dagent.deepseek.endpoint=...` | — |
+| 模型标识 | `-Dagent.deepseek.model=...` | `DEEPSEEK_MODEL` |
+
+默认模型是 `deepseek-chat`（支持 Function Calling），接口为
+`https://api.deepseek.com/chat/completions`。指导书原始材料使用智谱 GLM，
+本项目按要求改为 DeepSeek；两者请求体同为 OpenAI 兼容格式，差异集中在
+`DeepSeekClient` 内部的地址、模型名与错误提示，`Agent` / `ToolRegistry` / `Message` 均无需改动。
+
+### 7.2 运行
+
+```bash
+mvn -q -DskipTests package
+java -jar target/agent-cli-0.1.0.jar
+```
+
+没有配置 Key 时不会报错退出，而是提示并进入本地响应模式（Lab01 行为），
+因此 `"hello" | java -jar target/agent-cli-0.1.0.jar` 依然返回 `Hello, Agent!`。
+
+### 7.3 工具与安全边界
+
+| 工具 | 参数 | 复用实现 |
+|---|---|---|
+| `list_files` | `path`，可选 `maxDepth` | `ListFilesTool` |
+| `read_file` | `path`，可选 `offset` / `limit` | `ReadFileTool` |
+| `search_code` | `keyword`、`path` | `SearchCodeTool` |
+
+三条约束：所有路径都必须落在项目根目录内（越界直接拒绝）；单个工具结果超过 8000 字符会截断并注明；
+工具失败返回错误字符串作为 Observation，而不是抛异常中断整个 Agent。
+
+### 7.4 ReAct 循环与退出条件
+
+```text
+有 tool_calls → 保存带 tool_calls 的 assistant 消息 → 逐个执行工具
+             → 回传 role=tool（带原始 tool_call_id）→ 下一轮
+无 tool_calls → 保存 assistant 最终回答 → 返回并退出
+达到 MAX_ITERATIONS（10）→ 强制退出
+LLM 调用失败 → 返回可读的错误说明，不崩溃
+```
+
+### 7.5 验证方式
+
+离线（不需要 Key，每次改动都可回归）：
+
+```bash
+mvn test
+```
+
+其中 `DeepSeekClientTest` 用 MockWebServer 验证请求形状、Bearer 鉴权、`content=null` 时的
+`tool_calls` 解析与 401/429/5xx 诊断；`ReActAgentTest` 用 `FakeLLMClient` 验证循环控制。
+
+联网验收（需要真实 Key，人工执行一次）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
+```
+
+## 8. 实验报告
 
 - [Lab01-Report.md](Lab01-Report.md)：Java Project Bootstrap（V1）
 - [Lab02-Report.md](Lab02-Report.md)：File Tools（V2）
+- [Lab03-Report.md](Lab03-Report.md)：LLM Client + ReAct Agent + Tool Calling（V3）
 - [HANDOFF.md](HANDOFF.md)：任务交接文档（工程现状、设计决策与坑位、已知问题、下一步）

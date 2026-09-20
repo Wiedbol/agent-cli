@@ -57,6 +57,8 @@ class ConsoleStreamsTest {
             System.setProperty(property, "GBK");
             assertEquals(GBK, ConsoleStreams.stdinCharset());
             assertEquals(GBK, ConsoleStreams.stdoutCharset());
+            assertEquals(GBK, ConsoleStreams.stderrCharset(),
+                    "stderr 必须与 stdout 遵循同一套编码优先级，否则 -D 只修好一半");
         } finally {
             if (previous == null) {
                 System.clearProperty(property);
