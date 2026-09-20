@@ -1,7 +1,7 @@
 # agent-cli 任务交接文档
 
 > 用途：把当前工程状态、设计决策、已知坑位与后续步骤完整交给另一个会话 / 另一位协作者。
-> 生成时间：2026-09-20（Lab03 完成后更新） ｜ 仓库：`E:\agent-cli` ｜ 分支：`master` ｜ HEAD：`a0e4149` + Lab03 提交
+> 生成时间：2026-09-20（Lab03 完成后更新） ｜ 仓库：`E:\agent-cli` ｜ 分支：`master` ｜ LAB03 代码提交：`6638a40`
 
 ---
 
@@ -305,6 +305,7 @@ Start-Process java -ArgumentList "-cp","target/classes","com.agent.Main" `
 ## 8. Git 历史与提交规范
 
 ```text
+b3286fd 2026-09-20  docs: refresh handoff and lab03 report after review
 6638a40 2026-09-20  lab03: add deepseek client, tool registry and react agent
 a0e4149 2026-09-18  pdf report                      ← 生成两份 PDF，并精简了 md 报告
 6d66a22 2026-09-14  lab01/lab02: default to JVM-detected console encoding
@@ -345,7 +346,7 @@ a9464e7 2026-09-11  bootstrap project
 
 ## 10. 交接验收清单（Checklist）
 
-- [x] `git status` 干净、`git log --oneline -1` 为 `6638a40`（Lab03 提交）
+- [x] `git status` 干净；Lab03 相关提交为 `6638a40`（代码）与 `b3286fd`（文档），其后仅有文档微调
 - [x] `mvn clean test` → `Tests run: 107, Failures: 0, Errors: 0` + `BUILD SUCCESS`
 - [x] `java -cp target/classes com.agent.Main` → 输入 `hello` 得到 `Hello, Agent!`；输入中文**无需任何参数**即正常显示
 - [x] 可执行 fat jar：`"hello" | java -jar target/agent-cli-0.1.0.jar` → `Hello, Agent!`（缺 Key 时降级为本地模式并提示）
