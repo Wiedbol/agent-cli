@@ -160,8 +160,9 @@ java '-Dagent.deepseek.model=deepseek-chat' -jar target/agent-cli-0.1.0.jar
 powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
 ```
 
-> 端到端跑 `mvn exec:java` 走的是 `target/classes`，不包含 Jackson/OkHttp，只有在没有 Key
-> （本地模式）时才可用；要跑 Agent 请用 `java -jar target/agent-cli-0.1.0.jar`。
+> `mvn exec:java` 走的是**运行时依赖类路径**（含 Jackson/OkHttp），Agent 模式同样可用；
+> 已用假 Key 实测：能正常构造 `DeepSeekClient` 并打印 `已启用 DeepSeek Agent（model=deepseek-chat）`。
+> 注意 `java -cp target/classes` 这种手拼 classpath 的方式**不含**第三方依赖，只适合本地模式或 Lab02 Demo。
 
 > ⚠️ PowerShell 下 `-D` 参数**必须加引号**：`-Dagent.encoding=UTF-8` 不加引号会被拆成两个参数，报
 > `ClassNotFoundException: /encoding=UTF-8`。
@@ -304,6 +305,7 @@ Start-Process java -ArgumentList "-cp","target/classes","com.agent.Main" `
 ## 8. Git 历史与提交规范
 
 ```text
+6638a40 2026-09-20  lab03: add deepseek client, tool registry and react agent
 a0e4149 2026-09-18  pdf report                      ← 生成两份 PDF，并精简了 md 报告
 6d66a22 2026-09-14  lab01/lab02: default to JVM-detected console encoding
 39ab7ba 2026-09-14  lab01: fix garbled Chinese input in Main
@@ -343,13 +345,17 @@ a9464e7 2026-09-11  bootstrap project
 
 ## 10. 交接验收清单（Checklist）
 
-- [ ] `git status` 干净、`git log --oneline -1` 为 `a0e4149`（或后续提交）
-- [ ] `mvn clean test` → `Tests run: 52, Failures: 0, Errors: 0` + `BUILD SUCCESS`
-- [ ] `java -cp target/classes com.agent.Main` → 输入 `hello` 得到 `Hello, Agent!`；输入中文**无需任何参数**即正常显示
-- [ ] `java -cp target/classes com.agent.tool.FileToolsDemo --tree` → 首行 `== stdout encoding: GBK ==`，中文正常，列表里**没有** `target/`、`.git/`
-- [ ] `java -cp target/classes com.agent.tool.FileToolsDemo not-exist.txt` → 抛 `NoSuchFileException`（退出码 1），不出现其它崩溃
-- [ ] 已确认「报告以 md 还是 pdf 为准」（对应 §7 第 5 项）
-- [ ] 若继续做 Lab03：先取到 `labs-lab03` 指导书，再按 §6 的约束增量开发，并在完成后同步更新报告
+- [x] `git status` 干净、`git log --oneline -1` 为 `6638a40`（Lab03 提交）
+- [x] `mvn clean test` → `Tests run: 107, Failures: 0, Errors: 0` + `BUILD SUCCESS`
+- [x] `java -cp target/classes com.agent.Main` → 输入 `hello` 得到 `Hello, Agent!`；输入中文**无需任何参数**即正常显示
+- [x] 可执行 fat jar：`"hello" | java -jar target/agent-cli-0.1.0.jar` → `Hello, Agent!`（缺 Key 时降级为本地模式并提示）
+- [x] `java -cp target/classes com.agent.tool.FileToolsDemo --tree` → 首行 `== stdout encoding: GBK ==`，中文正常，列表里**没有** `target/`、`.git/`
+- [x] `java -cp target/classes com.agent.tool.FileToolsDemo not-exist.txt` → 抛 `NoSuchFileException`（退出码 1），不出现其它崩溃
+- [x] `java -cp target/classes com.agent.Main --upper` → `I HEARD: HI`（Lab01 挑战任务 3 已完成）
+- [x] 已确认「报告以 md 还是 pdf 为准」：**md 为准，PDF 为派生产物**（§7 第 5 项）
+- [x] Lab03 代码、测试（+55 用例）、`Lab03-Report.md`、README / HANDOFF 已同步更新
+- [ ] **待人工执行**：在 `.env` 填入 `DEEPSEEK_API_KEY` 后运行 `scripts\verify-deepseek.ps1`，完成 AT01~AT05 / AT07 的真实模型验收
+- [ ] 若继续做 Lab04：统一 `Tool` 接口 + 正式 `ToolRegistry` / `ToolExecutor`，并处理 `ToolRegistry` 的参数类型损失
 
 ---
 

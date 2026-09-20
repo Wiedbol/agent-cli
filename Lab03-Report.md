@@ -280,6 +280,10 @@ target/, .git/, .idea/, .vscode/, node_modules/, *.class, ...
 PS> java -cp target/classes com.agent.tool.FileToolsDemo not-exist.txt
 Exception in thread "main" java.nio.file.NoSuchFileException: 不是文件或不存在: not-exist.txt
 exit code: 1        ← Lab02 的异常契约（NoSuchFileException + 退出码 1）未被本次改动破坏
+
+PS> $env:DEEPSEEK_API_KEY='sk-dummy'; "exit" | mvn -q exec:java
+已启用 DeepSeek Agent（model=deepseek-chat），clear 清空历史，exit/quit 退出。
+        ← 用假 Key 证明 exec:java 的运行时类路径已包含 Jackson/OkHttp（只构造对象，未发起真实请求）
 ```
 
 ### 4.5 联网验收（需要真实 Key，待人工执行）
