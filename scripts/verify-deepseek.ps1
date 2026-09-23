@@ -1,4 +1,4 @@
-# Lab03 联网验收脚本：在真实 DeepSeek 接口上跑一遍 AT01~AT07。
+﻿# Lab03 联网验收脚本：在真实 DeepSeek 接口上跑一遍 AT01~AT07。
 #
 # 前置条件：项目根目录 .env 里有 DEEPSEEK_API_KEY=你的Key（.env 已被 .gitignore 忽略）。
 # 用法（在仓库根目录执行）： powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1

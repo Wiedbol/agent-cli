@@ -243,13 +243,13 @@ private Path resolve(String rawPath) {
 
 | 编号 | 验收项 | 离线证据（本机已执行） | 联网证据 |
 |---|---|---|---|
-| AT01 | 模型连通，返回非空 `content` | `DeepSeekClientTest#shouldSendBearerAuthAndOpenAiCompatibleBody` 断言解析出 `content` | 待人工执行（§4.5） |
-| AT02 | 直接回答，不调用工具 | `ReActAgentTest#shouldReturnFinalAnswerOnFirstRound`（只请求 1 轮） | 待人工执行 |
-| AT03 | 单工具调用 | `ReActAgentTest#shouldLoopOnToolCallAndFeedObservationBackWithToolCallId`（真实调用 `ReadFileTool`） | 待人工执行 |
-| AT04 | 多步调用 | `ReActAgentTest#shouldExecuteEveryToolCallInOneRound`（同轮两个调用全部执行并回传） | 待人工执行 |
-| AT05 | 工具失败不崩溃 | `shouldFeedUnknownToolBackAsObservation` + `ToolRegistryTest#shouldReportMissingFileAsObservation` | 待人工执行 |
-| AT06 | 第二轮无工具调用即退出 | `#shouldReturnFinalAnswerOnFirstRound`（`fake.callCount() == 1`） | — |
-| AT07 | `clear` 清空历史 | `#shouldClearHistoryKeepingOnlySystemPrompt` + `MainTest#shouldHandleClearCommandWithoutConsumingNextLine` | 待人工执行 |
+| AT01 | 模型连通，返回非空 `content` | `DeepSeekClientTest#shouldSendBearerAuthAndOpenAiCompatibleBody` 断言解析出 `content` | ✅ 2026-09-23 实测：`Token：输入=632，输出=27`，返回非空回答 |
+| AT02 | 直接回答，不调用工具 | `ReActAgentTest#shouldReturnFinalAnswerOnFirstRound`（只请求 1 轮） | ✅ 2026-09-23 实测：「你好」第 1 轮直接回答，无工具调用 |
+| AT03 | 单工具调用 | `ReActAgentTest#shouldLoopOnToolCallAndFeedObservationBackWithToolCallId`（真实调用 `ReadFileTool`） | ✅ 2026-09-23 实测：「读取 pom.xml 并告诉我用了哪些依赖」→ `list_files` → `read_file` → 正确列出 5 个依赖 |
+| AT04 | 多步调用 | `ReActAgentTest#shouldExecuteEveryToolCallInOneRound`（同轮两个调用全部执行并回传） | ✅ 2026-09-23 实测：「搜索 TODO，并读取其中一个文件」→ `search_code`（45 处命中）→ `read_file` |
+| AT05 | 工具失败不崩溃 | `shouldFeedUnknownToolBackAsObservation` + `ToolRegistryTest#shouldReportMissingFileAsObservation` | ✅ 2026-09-23 实测：读 `not-exist.txt` 得到「执行工具失败: 不是文件或不存在」，模型据此解释失败原因 |
+| AT06 | 第二轮无工具调用即退出 | `#shouldReturnFinalAnswerOnFirstRound`（`fake.callCount() == 1`） | —（离线用例即可判定） |
+| AT07 | `clear` 清空历史 | `#shouldClearHistoryKeepingOnlySystemPrompt` + `MainTest#shouldHandleClearCommandWithoutConsumingNextLine` | ✅ 2026-09-23 实测：输出「历史已清空。」 |
 
 ### 4.4 命令行验收记录（本机实测）
 
@@ -286,28 +286,97 @@ PS> $env:DEEPSEEK_API_KEY='sk-dummy'; "exit" | mvn -q exec:java
         ← 用假 Key 证明 exec:java 的运行时类路径已包含 Jackson/OkHttp（只构造对象，未发起真实请求）
 ```
 
-### 4.5 联网验收（需要真实 Key，待人工执行）
+### 4.5 联网验收记录（2026-09-23 实测通过）
 
-本机 `.env` 目前为空，仓库中不存在任何 API Key（这是刻意的安全状态），
-因此涉及真实 DeepSeek 服务的 AT01 / AT02 / AT03 / AT04 / AT05 / AT07 需要人工执行一次。
-为此提供了可复跑的脚本：
+配置 `.env` 中的真实 `DEEPSEEK_API_KEY` 后执行：
 
 ```powershell
-# 1) 写入 Key（.env 已被 .gitignore 忽略，不会进入提交）
-[IO.File]::WriteAllText("$PWD\.env", "DEEPSEEK_API_KEY=你的真实Key")
-
-# 2) 一键跑完 6 项验收并打印原始输出
-powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
 ```
 
 脚本用 `Start-Process -RedirectStandardInput/-RedirectStandardOutput` 捕获**原始字节**并统一按
-UTF-8 交互，避免 PowerShell `>` 重定向先解码再重写造成的额外转码（这是 Lab01/Lab02 编码问题的老坑）。
-通过标准：AT01 有非空回答；AT03 输出出现 `执行工具: read_file` 与后续最终回答；
-AT04 出现 `search_code` 与 `read_file` 两次调用；AT05 读取不存在的文件后仍给出解释且进程不崩溃；
-AT07 打印「历史已清空。」。
+UTF-8 交互，避免 PowerShell `>` 重定向先解码再重写造成的额外转码（Lab01/Lab02 的老坑）。
+以下是实际输出的节选（原文过长处用 `...` 截断）：
 
-> 诚实说明：本报告中所有「已验证」结论均来自本机可复现的离线测试与命令行实测；
-> 真实模型服务的连通性结论必须由上述脚本在配置 Key 后产生，本文不预先断言其通过。
+**AT01 / AT02 —— 连通性与直接回答（不调用工具）**
+
+```text
+已启用 DeepSeek Agent（model=deepseek-chat），clear 清空历史，exit/quit 退出。
+思考中……第 1 轮
+Token：输入=632，输出=27
+你好，我是一个 Java 编程助手 Agent，可以帮你读取、搜索和分析项目代码，并基于实际代码内容回答你的问题。
+```
+
+**AT03 —— 单工具调用 + 多步（`list_files` → `read_file` → 最终答案）**
+
+```text
+思考中……第 1 轮        Token：输入=673，输出=53
+执行工具: list_files，参数: {"path": ".", "maxDepth": 2}
+观察结果: 文件列表（共 12 个）: .agentignore .env .gitignore HANDOFF.md ... pom.xml ...
+思考中……第 2 轮        Token：输入=808，输出=39
+执行工具: read_file，参数: {"path": "pom.xml"}
+观察结果: 文件内容: <?xml version="1.0" encoding="UTF-8"?> <project ...> ...
+思考中……第 3 轮        Token：输入=2068，输出=457
+根据 `pom.xml`，这是一个 Java 17 的 Maven CLI 项目（com.agent:agent-cli:0.1.0）……
+| jackson-databind | 2.17.2 | JSON 序列化/解析 |
+| okhttp | 4.12.0 | HTTP 客户端 |
+| slf4j-api / slf4j-simple | 2.0.13 | 日志 |
+| junit-jupiter | 5.10.2（test） | 单元测试 |
+| mockwebserver | 4.12.0（test） | 本地 HTTP 服务 |
+```
+
+模型给出的依赖清单与 `pom.xml` 实际内容完全一致 —— 这是「回答建立在真实文件内容上、而不是凭空生成」的直接证据。
+注意 `maxDepth` 这个**可选参数**被模型正确使用（对应 §3.5 的 Schema 设计）。
+
+**AT04 —— 多步调用（`search_code` → `read_file`）**
+
+```text
+思考中……第 1 轮        Token：输入=2536，输出=52
+执行工具: search_code，参数: {"keyword": "TODO", "path": "."}
+观察结果: 搜索结果（共 45 条）: HANDOFF.md:143: ... Lab02-Report.md:45: ...
+思考中……第 2 轮        Token：输入=4412，输出=75
+执行工具: read_file，参数: {"path": "src/main/java/com/agent/tool/FileToolsDemo.java"}
+观察结果: 文件内容: package com.agent.tool; ...
+思考中……第 3 轮        Token：输入=5112，输出=509
+搜索完成，并已读取其中一个文件。 在项目中搜索 TODO 共命中 45 处……
+```
+
+**AT05 —— 工具失败不崩溃（错误成为 Observation）**
+
+```text
+思考中……第 1 轮        Token：输入=5634，输出=40
+执行工具: read_file，参数: {"path": "not-exist.txt"}
+观察结果: 执行工具失败: 不是文件或不存在: E:\agent-cli\not-exist.txt
+思考中……第 2 轮        Token：输入=5706，输出=208
+读取失败了，返回错误信息：执行工具失败: 不是文件或不存在: E:\agent-cli\not-exist.txt
+……如果你需要，我可以帮你列出当前目录的文件，确认可用的路径。
+```
+
+进程没有异常退出，模型拿到了错误原因并据此向用户解释 —— 这正是「工具失败也要回传」的设计意图。
+另外这条记录也顺带证明了**路径治理**在真实调用中生效：相对路径被解析为项目根目录下的绝对路径。
+
+**AT07 —— `clear` 清空历史**
+
+```text
+历史已清空。
+```
+
+**Token 消耗与上下文增长（实测数据）**
+
+| 轮次（对应输入） | 输入 token | 输出 token |
+|---|---:|---:|
+| 你好（第 1 轮） | 632 | 27 |
+| 读取 pom.xml（3 轮） | 673 / 808 / 2068 | 53 / 39 / 457 |
+| 搜索 TODO（3 轮） | 2536 / 4412 / 5112 | 52 / 75 / 509 |
+| 读取不存在文件（2 轮） | 5634 / 5706 | 40 / 208 |
+| **合计** | **27,581** | **1,460** |
+
+这张表本身就是「为什么需要结果截断」的量化证据：每轮都要重发完整历史，
+输入 token 从 632 一路涨到 5,706（约 9 倍）。若不限制单次工具结果长度，
+一次 `read_file` 大文件就会让后续每一轮都额外付出同样的成本。
+
+> 安全说明：真实 Key 只存在于 `.env`（已被 `.gitignore` 忽略），运行输出中不含 Key；
+> 脚本执行时 stderr 为空，说明没有出现任何鉴权/网络层警告。
 
 ---
 
@@ -358,6 +427,17 @@ AT07 打印「历史已清空。」。
 | **验证命令与结果** | `git status --porcelain` 不再列出 `.env`；全量测试仍为 107 通过 |
 | **反思** | 「AI 不会主动泄露 Key」不代表「工程配置安全」。安全项必须由人检查，最省事的检查点就是提交前的 `git status` |
 
+### 案例 E：验收脚本「语法没问题」却报语法错误
+
+| 项目 | 内容 |
+|---|---|
+| **任务** | 提供可复跑的联网验收脚本 `scripts/verify-deepseek.ps1` |
+| **现象** | `powershell -File scripts\verify-deepseek.ps1` 直接解析失败：`Missing closing '}' in statement block`，而报错指向的 `if (...) {` 那一行语法完全正常 |
+| **人工审查的诊断** | Windows PowerShell 5.1 读取**无 BOM** 的 `.ps1` 时按系统 ANSI（本机 GBK）解码；UTF-8 中文串被按 GBK 错位解码后「吃掉」了后面的引号，于是语句块看起来没有闭合。脚本内容没错，错的是解码方式 |
+| **人工修改** | 把脚本改写为 **UTF-8 with BOM**（`[IO.File]::WriteAllText($p, $text, (New-Object Text.UTF8Encoding($true)))`），并在改动前后用 `[ScriptBlock]::Create($text)` 做语法自检 |
+| **验证命令与结果** | BOM 字节确认为 `EF BB BF`；重新执行后 AT01~AT05、AT07 全部产生预期输出 |
+| **反思** | 这与本工程前三次编码问题是同一个病根：**写出的字节编码 ≠ 读取方的解码方式**，只不过这次发生在 PowerShell 脚本层而不是 Java 控制台层。推论：任何跨进程/跨文件传递中文的场景，都要先问「谁来解码」 |
+
 ### 5.5 协作方式小结
 
 四个案例的共同结构是 **Prompt → AI 输出 → 人工审查 → 修改 → 测试验证**，
@@ -379,6 +459,8 @@ AT07 打印「历史已清空。」。
 | 7 | 模型可能请求根目录之外的路径 | 模型输出不可信 | `resolve()` 归一化后校验 `startsWith(root)`，越界直接拒绝（挑战任务 3） |
 | 8 | 忘记回传 `tool_call_id` 会怎样（指导书 AI Task 04 要求人为制造） | 服务端无法配对调用与结果 | 通过 `ReActAgentTest` 断言第二条请求中存在 `tool_call_id=call_1` 的 `tool` 消息；删掉这一行测试立即失败 |
 | 9 | 没有 Key 时 CLI 直接退出，无法演示 | 原实现把「缺配置」当成致命错误 | 改为降级到本地模式并提示，Lab01 的管道验收命令继续有效 |
+| 10 | 验收脚本报「语法错误」，实际语法正确 | PowerShell 5.1 把无 BOM 的 UTF-8 `.ps1` 按 GBK 解码，中文串吞掉了引号 | 改写为 UTF-8 with BOM，并用 `[ScriptBlock]::Create()` 做语法自检（案例 E） |
+| 11 | 上下文随轮次线性膨胀 | 每轮重发完整历史（含工具结果） | 实测输入 token 从 632 涨到 5,706；`ToolRegistry` 单次结果 8000 字符截断是当前的对策，Lab04 可考虑按 token 估算更精细的裁剪 |
 
 ---
 
@@ -462,7 +544,7 @@ AT07 打印「历史已清空。」。
 
 | # | 事项 | 说明 |
 |---|---|---|
-| 1 | 联网验收（AT01/AT03/AT04…） | 需在 `.env` 填入真实 `DEEPSEEK_API_KEY` 后执行 `scripts/verify-deepseek.ps1`（§4.5） |
+| 1 | 联网验收 | ✅ 已完成（2026-09-23），证据见 §4.5；脚本可随时重跑 |
 | 2 | `ToolRegistry` 的参数类型损失 | 参数被压成 `Map<String,String>`，数字/布尔/数组信息会丢失；当前三个工具够用，Lab04 应由统一 `Tool` 接口自描述 Schema 与参数类型 |
 | 3 | `SearchCodeTool` 静默跳过不可读文件 | Lab02 遗留：调用方无从得知「结果不完整」，可考虑返回被跳过文件的统计 |
 | 4 | `.agentignore` 与 `IgnoreRules.defaults()` 的重复 | Lab02 遗留，修改其一需同步另一处 |

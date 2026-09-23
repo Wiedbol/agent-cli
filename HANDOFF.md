@@ -284,6 +284,22 @@ Start-Process java -ArgumentList "-cp","target/classes","com.agent.Main" `
 现在 `stderrCharset()` / `configureStderr()` 与 stdout 共用同一套优先级，
 `Main.main` 两者都调用。新增输出流时要记得同步这套策略。
 
+### 6.9 `scripts/*.ps1` 必须保存为 UTF-8 **with BOM**
+
+Windows PowerShell 5.1 读取**无 BOM** 的 `.ps1` 时按系统 ANSI（本机 GBK）解码，
+里面的中文字符串会被错位解码并「吃掉」后面的引号，症状是
+`Missing closing '}' in statement block` —— 看起来像语法错误，其实文件内容没问题。
+
+`scripts/verify-deepseek.ps1` 目前带 BOM（`EF BB BF`）。若用会把 BOM 去掉的编辑器改它，
+就会复现上面这个假语法错误。检查与修复：
+
+```powershell
+[IO.File]::ReadAllBytes('scripts\verify-deepseek.ps1')[0..2]   # 应为 239,187,191
+$p = 'scripts\verify-deepseek.ps1'
+$t = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($true)))
+```
+
 ---
 
 ## 7. 已知问题 / 待办 / 不确定项
@@ -291,7 +307,7 @@ Start-Process java -ArgumentList "-cp","target/classes","com.agent.Main" `
 | # | 事项 | 状态与说明 |
 |---|---|---|
 | 1 | Lab01 挑战任务 3：`--upper` 参数把输出转大写 | **Lab03 已实现**。放在 `Main` 的输出边界（`run(..., boolean upperCaseOutput)`），`Agent` 公开 API 未变；`MainTest` 新增 2 个用例 |
-| 2 | Lab03 真实模型联网验收（AT01~AT05、AT07） | **待人工执行**：本机 `.env` 为空、无任何 Key（刻意的安全状态）。填好 `DEEPSEEK_API_KEY` 后跑 `scripts\verify-deepseek.ps1`，通过标准见 `Lab03-Report.md` §4.5 |
+| 2 | Lab03 真实模型联网验收（AT01~AT05、AT07） | ✅ **2026-09-23 实测通过**：`.env` 配置真实 `DEEPSEEK_API_KEY` 后执行 `scripts\verify-deepseek.ps1`，模型正确完成「直接回答 / list_files+read_file 总结依赖 / search_code+read_file / 读取不存在文件后解释失败 / clear」；输入 token 合计 27,581、输出 1,460，证据见 `Lab03-Report.md` §4.5 |
 | 3 | Lab04 统一 `Tool` 接口 | 未开始；Lab02 报告 §9.3 已给出预判（返回值如何文本化）；Lab03 的 `ToolRegistry` 是有意保留的过渡设计（`Map<String,String>` 丢类型、Schema 手工拼装） |
 | 4 | `SearchCodeTool` 静默跳过不可读文件 | **有意的取舍**：调用方无从得知「结果不完整」。若要改进，建议额外返回被跳过文件的统计（Lab02 报告 §9.6 有讨论） |
 | 5 | 报告的 `.md` 与 `.pdf` 可能不一致 | **已定规矩：`.md` 为唯一事实来源，PDF 是从 `.md` 派生的产物。** 提交 `a0e4149 pdf report` 曾在校验 PDF 的同时精简 `Lab01/02-Report.md`，导致两者不同步；此后修改报告一律先改 `.md`，如需 PDF 再重新生成，不在 PDF 上直接改。Lab03 目前只交付 `.md` |
@@ -355,7 +371,7 @@ a9464e7 2026-09-11  bootstrap project
 - [x] `java -cp target/classes com.agent.Main --upper` → `I HEARD: HI`（Lab01 挑战任务 3 已完成）
 - [x] 已确认「报告以 md 还是 pdf 为准」：**md 为准，PDF 为派生产物**（§7 第 5 项）
 - [x] Lab03 代码、测试（+55 用例）、`Lab03-Report.md`、README / HANDOFF 已同步更新
-- [ ] **待人工执行**：在 `.env` 填入 `DEEPSEEK_API_KEY` 后运行 `scripts\verify-deepseek.ps1`，完成 AT01~AT05 / AT07 的真实模型验收
+- [x] 真实模型验收：`.env` 填入 `DEEPSEEK_API_KEY` 后运行 `scripts\verify-deepseek.ps1`，AT01~AT05 / AT07 全部通过（2026-09-23，证据见 `Lab03-Report.md` §4.5）
 - [ ] 若继续做 Lab04：统一 `Tool` 接口 + 正式 `ToolRegistry` / `ToolExecutor`，并处理 `ToolRegistry` 的参数类型损失
 
 ---

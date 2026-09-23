@@ -284,7 +284,7 @@ mvn test
 其中 `DeepSeekClientTest` 用 MockWebServer 验证请求形状、Bearer 鉴权、`content=null` 时的
 `tool_calls` 解析与 401/429/5xx 诊断；`ReActAgentTest` 用 `FakeLLMClient` 验证循环控制。
 
-联网验收（需要真实 Key，人工执行一次）：
+联网验收（需要真实 Key；2026-09-23 已实测通过，脚本可重复执行）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
