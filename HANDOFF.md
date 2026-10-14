@@ -31,15 +31,19 @@
 V1（Lab01）        Maven + Java 17 + CLI + JUnit + Git          ✅ 已完成
 V2（Lab02）        + ListFilesTool / ReadFileTool / SearchCodeTool  ✅ 已完成
 V3（Lab03）        + DeepSeekClient / ToolRegistry / ReAct Agent     ✅ 已完成（待联网验收）
-Lab04             把三个 Tool 抽象成统一 Tool 接口               ⏳ 待做
+V4（六角色 Agent）  + 用户/控制员/LLM/注册员/执行员/守卫 + 写文件 + 执行命令  ✅ 已完成（含联网实测）
+Lab04（指导书）    把三个 Tool 抽象成统一 Tool 接口               ✅ 已被 V4 覆盖（见 §6.10）
 ```
 
-当前处于 **V3（Lab03）完成、等待 Lab04 材料** 的状态。实验指导书已下载：
+当前处于 **V3（Lab03）+ V4（六角色 Coding Agent）完成** 的状态。Lab03 指导书已下载：
 `d:\EdgeDownload\Lab 03-a：LLM Client + ReAct Agent + Tool Calling（GLM-5.2）.md` 与 `Lab 03-b：....md`。
 
 > **与指导书的差异（务必先看）**：指导书以智谱 GLM-5.2 为例，本项目按要求改用 **DeepSeek**
 > （`deepseek-chat`，OpenAI 兼容 Chat Completions）。厂商差异被收敛在 `DeepSeekClient` 一个类里，
 > 其余协议与循环代码不感知厂商，详见 §6.6 与 [`Lab03-Report.md`](Lab03-Report.md) §2.5。
+
+> **V4 是什么**：在 Lab03 的基础上补齐「写文件 + 执行命令」，并把整条链路拆成六个单一职责的角色
+> （用户 / 控制员 / LLM / 注册员 / 执行员 / 守卫，每个角色一个文件），详见 §6.10 与 README §8。
 
 ---
 
@@ -72,8 +76,16 @@ agent-cli/
 └── src/
     ├── main/java/com/agent/
     │   ├── Agent.java            # 本地模式 respond() + 模型模式 ReAct run()（MAX_ITERATIONS=10）
+    │   ├── CodingAgentCli.java   # V4：六个角色的装配点 + 交互式/单任务两种运行方式
     │   ├── ConsoleStreams.java   # 控制台编码策略（stdin/stdout/stderr）
-    │   ├── Main.java             # CLI：加载 Key + 对象接线 + REPL（clear/exit/quit/--upper）
+    │   ├── Main.java             # CLI 入口：参数解析 + 选择 Coding Agent / 本地模式
+    │   ├── roles/                # V4 六个角色（每个角色一个文件）
+    │   │   ├── UserRole.java         # 用户：任务输入 + 守卫确认的最终决定权
+    │   │   ├── LlmRole.java          # LLM：系统提示词 + 消息历史 + chat 调用
+    │   │   ├── RegistrarRole.java    # 注册员：登记工具 / 导出 Schema / 按名查找
+    │   │   ├── GuardRole.java        # 守卫：路径沙箱 / 受保护文件 / 高危命令裁决
+    │   │   ├── ExecutorRole.java     # 执行员：执行 + 异常兜底 + 结果裁剪 + 计时
+    │   │   └── ControllerRole.java   # 控制员：ReAct 循环 + 工具分发 + 终止判定
     │   ├── llm/
     │   │   ├── LLMClient.java        # 接口 + ToolDef(name, description, parameters)
     │   │   ├── DeepSeekClient.java   # OkHttp + Jackson，Bearer 鉴权，401/402/429/5xx 诊断
@@ -86,13 +98,21 @@ agent-cli/
     │       ├── ListFilesTool.java  # 递归列出 / 深度限制 / 树形输出
     │       ├── ReadFileTool.java   # 读取 UTF-8 / 分页读取
     │       ├── SearchCodeTool.java # 关键字 / 正则搜索，返回 Match 列表
+    │       ├── Tool.java           # V4 统一接口：name/description/parameters/risk/pathArguments/execute
+    │       ├── ToolRequest.java    # V4 入参：root + 参数 + resolvePath 沙箱校验
+    │       ├── ToolResult.java     # V4 结果：success + output + 耗时，失败也是结果
+    │       ├── ToolSchemas.java    # V4 JSON Schema 构造器
+    │       ├── WriteFileTool.java  # V4 新工具：创建/覆盖/追加文件
+    │       ├── RunCommandTool.java # V4 新工具：执行命令（超时 + 进程树清理 + 编码解码）
     │       ├── ToolRegistry.java   # 三个 File Tool → 统一 execute(name, jsonArgs) -> String
     │       └── FileToolsDemo.java  # 命令行演示入口
     └── test/java/com/agent/
         ├── AgentTest.java           # 9
         ├── ConsoleStreamsTest.java  # 5
         ├── MainTest.java            # 11（含 --upper / clear / exit）
+        ├── MainOptionsTest.java     # 6（V4 CLI 参数解析）
         ├── ReActAgentTest.java      # 11（FakeLLMClient 离线验证循环）
+        ├── roles/                   # 42（守卫 12 / 控制员 11 / LLM 8 / 执行员 6 / 注册员 5）
         ├── llm/
         │   ├── FakeLLMClient.java      # 测试替身：脚本化响应 + 记录请求
         │   ├── MessageTest.java        # 6
@@ -147,7 +167,26 @@ java -cp target/classes com.agent.tool.FileToolsDemo --tree           # 树形�
 java '-Dagent.encoding=UTF-8' -cp target/classes com.agent.tool.FileToolsDemo --tree   # 同时作用于 stdout 与 stderr
 ```
 
-### 4.1 配置 DeepSeek（Lab03）
+### 4.1 运行六角色 Coding Agent（V4）
+
+```powershell
+# 交互式：直接输入自然语言任务（需要 .env 里有 DEEPSEEK_API_KEY）
+java -jar target/agent-cli-0.1.0.jar
+
+# 单任务模式：跑完即退出，适合脚本化验收
+java -jar target/agent-cli-0.1.0.jar --yes --task "读取 pom.xml 的 artifactId，写入 demo/id.txt，然后运行 git log --oneline -1"
+
+# 指定沙箱根目录与最大步数
+java -jar target/agent-cli-0.1.0.jar --root . --max-steps 8 --task "..."
+
+# 本地回显模式（Lab01 行为，不需要 Key）
+java -jar target/agent-cli-0.1.0.jar --local
+```
+
+> PowerShell 下 `-D` 参数必须加引号（见下方 §4.2）。`--yes` 会跳过守卫的逐次确认，只应在你信任任务内容时使用。
+> 中文输出乱码时加 `'-Dagent.encoding=UTF-8'`。
+
+### 4.2 配置 DeepSeek（Lab03）
 
 ```powershell
 # 写入 Key；.env 已被 .gitignore 忽略，绝不能提交
@@ -169,7 +208,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
 
 ---
 
-## 5. 测试基线（当前 107 个用例全绿）
+## 5. 测试基线（当前 175 个用例全绿）
 
 | 测试类 | 用例数 | 覆盖重点 |
 |---|---:|---|
@@ -186,6 +225,15 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
 | `ApiKeyLoaderTest` | 6 | BOM / 注释 / 引号解析、相似键名不误匹配、`.env` 优先于环境变量、缺失时返回 null |
 | `ToolRegistryTest` | 14 | 三个工具 Schema、真实执行三个 Lab02 工具、分页、`maxDepth`、未知工具、非法 JSON、路径越界、结果截断 |
 | `ReActAgentTest` | 11 | 本地模式退化、正常退出、工具调用循环、`tool_call_id` 回传、同轮多调用、未知工具、LLM 异常、`MAX_ITERATIONS`、`clearHistory`、历史只读、半配置拒绝 |
+| `MainOptionsTest` | 6 | V4 CLI 参数：默认值、`--task`/`-t`、`--yes`/`-y`、`--local`、`--upper`、`--root`、`--max-steps`、未知参数与 null |
+| `GuardRoleTest` | 12 | 只读放行、写入需确认、路径越界/绝对路径越界拒绝、`.env`+`.git`+`*.key` 拒绝、高危命令拒绝、命令内越界路径拒绝、`..` 拒绝、cmd 开关误判防护 |
+| `ControllerRoleTest` | 11 | 直接回答、工具调用回传、未知工具、守卫拒绝、用户批准/拒绝写入、同轮多调用、最大步数、LLM 失败、非法 JSON 参数 |
+| `LlmRoleTest` | 8 | 系统提示词、任务入历史、`assistant(tool_calls)` 与 `tool(tool_call_id)` 顺序、最终回答、reset、只读快照、工具定义透传 |
+| `ExecutorRoleTest` | 6 | 成功路径、参数错误 / 安全异常 / IO 异常的兜底文案、输出截断、真实工具执行 |
+| `RegistrarRoleTest` | 5 | 标准工具集、Schema 与描述、按名查找、重复/空名拒绝、路径参数声明 |
+| `ToolContractTest` | 7 | 参数读取（必填/可选/空白）、`resolvePath` 沙箱（相对/越界/绝对越界） |
+| `WriteFileToolTest` | 6 | 新建 + 建父目录、覆盖、追加、越界拒绝、输出含字节数 |
+| `RunCommandToolTest` | 7 | 工作目录、退出码非 0、未知命令、超时强杀（含进程树）、非法超时参数、shell 选择 |
 
 测试全部使用 `@TempDir` 或内存字节流，**不依赖真实项目结构**，可重复执行、可并行。
 
@@ -300,6 +348,41 @@ $t = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
 [IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($true)))
 ```
 
+### 6.10 V4：六角色链路（用户 / 控制员 / LLM / 注册员 / 执行员 / 守卫）
+
+**为什么拆角色**：Lab03 的 `Agent` 同时管历史、跑循环、查工具、执行工具。V4 要加「写文件」和「执行命令」
+这两类危险能力，如果继续堆在一个类里，安全判断会和业务逻辑缠在一起，既难测也难审。
+拆开之后，每个角色只有一个变化的理由。
+
+| 角色 | 文件 | 职责 | 明确不负责 |
+|---|---|---|---|
+| 用户 | `roles/UserRole.java` | 提供任务；对守卫的确认请求做最终决定 | 解析任务、选工具 |
+| LLM | `roles/LlmRole.java` | 系统提示词 + 消息历史 + `chat` 调用 | 决定执行什么、动手做事 |
+| 注册员 | `roles/RegistrarRole.java` | 工具登记、Schema 导出、按名查找 | 执行、安全判断 |
+| 守卫 | `roles/GuardRole.java` | 路径沙箱 / 受保护文件 / 高危命令裁决 | 执行工具 |
+| 执行员 | `roles/ExecutorRole.java` | 真正执行、异常兜底、结果裁剪、计时 | 安全判断 |
+| 控制员 | `roles/ControllerRole.java` | ReAct 循环、工具分发、终止判定 | 读文件、发 HTTP、做安全判断 |
+
+装配点是唯一的：`CodingAgentCli`（谁依赖谁），`Main` 只做参数解析与启动。改动时请保持这条边界。
+
+**必须遵守的约定**：
+
+1. **守卫是唯一的安全裁决者**。不要在工具里偷偷放宽限制，也不要在控制员里绕过守卫调用执行员。
+2. **路径沙箱有两层，缺一不可**：`GuardRole` 做裁决（给人看的拒绝理由），
+   `ToolRequest.resolvePath` 做工具自身防御（防止绕过守卫的调用路径）。
+3. **工具必须声明 `risk()` 与 `pathArguments()`**：守卫只认这两个声明，
+   新增工具时如果漏填，守卫会按「只读」放行，这是最容易出错的地方。
+4. **失败是结果不是异常**：执行员统一把异常转成 `ToolResult.fail`，控制员再把它当 Observation 回传。
+5. **`run_command` 的 shell**：Windows 上是 `cmd.exe /d /c`。要跑 PowerShell 语法必须显式写
+   `powershell -NoProfile -Command "..."`；输出按 `native.encoding`（本机 GBK）解码，可用
+   `-Dagent.shell.encoding=` 覆盖。
+6. **超时必须杀整棵进程树**：Windows 上杀掉 `cmd` 不会杀它的子进程（`ping`、`java`），
+   会导致工作目录/文件句柄泄漏 —— `RunCommandTool.killProcessTree` 已处理，别改回 `destroyForcibly()`。
+
+**已知局限（不要对外宣称是沙箱）**：守卫是「黑名单 + 人工确认」，
+能挡住常见误操作与明显破坏性指令，但绕过手法（脚本包装、编码变形、间接命令）不在覆盖范围内。
+真正的隔离需要容器 / 受限用户 / 虚拟机。
+
 ---
 
 ## 7. 已知问题 / 待办 / 不确定项
@@ -313,6 +396,10 @@ $t = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
 | 5 | 报告的 `.md` 与 `.pdf` 可能不一致 | **已定规矩：`.md` 为唯一事实来源，PDF 是从 `.md` 派生的产物。** 提交 `a0e4149 pdf report` 曾在校验 PDF 的同时精简 `Lab01/02-Report.md`，导致两者不同步；此后修改报告一律先改 `.md`，如需 PDF 再重新生成，不在 PDF 上直接改。Lab03 目前只交付 `.md` |
 | 8 | `deepseek-reasoner` 不支持 Function Calling | 默认模型固定为 `deepseek-chat`；若用 `-Dagent.deepseek.model=deepseek-reasoner` 覆盖，工具调用可能不触发。改模型前先确认该模型支持 tools |
 | 9 | `TOOL` 结果长度与 token 成本 | 单次结果上限 8000 字符只是粗粒度防护；`read_file` 大文件仍会消耗较多 token。若要更精细，可按行数或 token 估算截断 |
+| 10 | 守卫不是完备沙箱 | 「黑名单 + 人工确认」能挡常见误操作，挡不住脚本包装/编码变形等绕过手法；强隔离需容器或受限用户（§6.10） |
+| 11 | `write_file` 覆盖写没有 diff 预览与回滚 | 目前只在守卫层要求用户确认；若要做「审阅后写入」，需要引入 diff 展示与备份（可参考 Lab04 之后的演进方向） |
+| 12 | `run_command` 在 Windows 上默认是 cmd | PowerShell 语法需显式 `powershell -NoProfile -Command "..."`；跨平台脚本要避免只在一个 shell 里成立的写法 |
+| 13 | 六角色链路的 token 成本更高 | 每个工具调用都会把完整历史重发一次；复杂任务建议配合 `--max-steps` 与工具结果截断使用 |
 | 6 | 无 CI、无远程仓库 | `git remote` 为空，全部为本地提交；未配置 GitHub Actions 等 |
 | 7 | `target/` 不入库 | 已由 `.gitignore` 忽略；交接时不需携带构建产物 |
 
@@ -372,6 +459,10 @@ a9464e7 2026-09-11  bootstrap project
 - [x] 已确认「报告以 md 还是 pdf 为准」：**md 为准，PDF 为派生产物**（§7 第 5 项）
 - [x] Lab03 代码、测试（+55 用例）、`Lab03-Report.md`、README / HANDOFF 已同步更新
 - [x] 真实模型验收：`.env` 填入 `DEEPSEEK_API_KEY` 后运行 `scripts\verify-deepseek.ps1`，AT01~AT05 / AT07 全部通过（2026-09-23，证据见 `Lab03-Report.md` §4.5）
+- [x] V4 全量测试：`mvn clean test` → `Tests run: 175, Failures: 0, Errors: 0` + `BUILD SUCCESS`
+- [x] V4 端到端实测（2026-10-14，真实 DeepSeek）：读 `pom.xml` → 执行 `git log --oneline -1` → 写 `demo/agent-summary.md` → 重新读回自查 → 输出最终回答
+- [x] V4 守卫实测：读取 `../outside.txt` 被拒（路径越界）、`rm -rf /tmp/agent-test` 被拒（高危 + 项目外路径），Agent 均如实说明原因
+- [x] V4 兼容性回归：`--local` 仍返回 `Hello, Agent!`；Lab03 的 `scripts\verify-deepseek.ps1` 与 107 个既有用例全部保持通过
 - [ ] 若继续做 Lab04：统一 `Tool` 接口 + 正式 `ToolRegistry` / `ToolExecutor`，并处理 `ToolRegistry` 的参数类型损失
 
 ---

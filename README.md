@@ -24,8 +24,16 @@ agent-cli/
 └── src/
     ├── main/java/com/agent/
     │   ├── Agent.java
+    │   ├── CodingAgentCli.java         # V4：六个角色的装配点（唯一的依赖注入地点）
     │   ├── ConsoleStreams.java
     │   ├── Main.java
+    │   ├── roles/                      # 六个角色，每个角色一个文件
+    │   │   ├── UserRole.java           #   用户：任务输入 + 确认放行
+    │   │   ├── LlmRole.java            #   LLM：系统提示词与消息历史
+    │   │   ├── RegistrarRole.java      #   注册员：工具登记与 Schema 导出
+    │   │   ├── GuardRole.java          #   守卫：沙箱与高危命令裁决
+    │   │   ├── ExecutorRole.java       #   执行员：执行 + 兜底 + 裁剪
+    │   │   └── ControllerRole.java     #   控制员：ReAct 循环与终止判定
     │   ├── llm/
     │   │   ├── LLMClient.java          # 模型客户端接口（依赖倒置的边界）
     │   │   ├── DeepSeekClient.java     # Chat Completions 实现
@@ -38,13 +46,21 @@ agent-cli/
     │       ├── IgnoreRules.java
     │       ├── ListFilesTool.java
     │       ├── ReadFileTool.java
+    │       ├── RunCommandTool.java     # V4：执行命令（超时 + 进程树清理）
     │       ├── SearchCodeTool.java
+    │       ├── Tool.java               # V4：统一 Tool 接口（名字/描述/Schema/风险等级）
+    │       ├── ToolRequest.java        # V4：调用入参 + 路径沙箱校验
+    │       ├── ToolResult.java         # V4：统一结果（成功与否 + Observation 文本）
+    │       ├── ToolSchemas.java        # V4：JSON Schema 构造器
+    │       ├── WriteFileTool.java      # V4：创建/覆盖/追加文件
     │       └── ToolRegistry.java       # 把三个 File Tool 适配成 Tool Calling 协议
     └── test/java/com/agent/
         ├── AgentTest.java
         ├── ConsoleStreamsTest.java
+        ├── MainOptionsTest.java        # V4：CLI 参数解析
         ├── MainTest.java
         ├── ReActAgentTest.java
+        ├── roles/                      # 守卫策略、执行员兜底、控制员循环的离线测试
         ├── llm/
         │   ├── FakeLLMClient.java      # 离线测试替身
         │   ├── MessageTest.java
@@ -72,6 +88,13 @@ agent-cli/
 | `ApiKeyLoader` | `.env` 优先、环境变量兜底；`.env` 必须留在 `.gitignore` 中 |
 | `ToolRegistry` | 向模型描述工具、解析参数、复用 Lab02 三个 File Tool，并把失败转成错误 Observation |
 | `ReActAgentTest` | 用 `FakeLLMClient` 离线验证循环退出、Observation 回传、`MAX_ITERATIONS` 与历史清空 |
+| `CodingAgentCli` | V4 装配点：把六个角色按依赖关系接起来，提供交互式与单任务两种运行方式 |
+| `UserRole` / `LlmRole` / `RegistrarRole` | 用户（输入 + 确认）、LLM（提示词 + 消息历史）、注册员（工具登记与 Schema） |
+| `GuardRole` | 守卫：路径沙箱、受保护文件、高危命令的放行/确认/拒绝裁决（纯函数式，可离线回归） |
+| `ExecutorRole` | 执行员：执行工具、把异常转成失败结果、截断超长输出、记录耗时 |
+| `ControllerRole` | 控制员：ReAct 循环、工具调用分发、最大步数与失败终止判定 |
+| `Tool` / `ToolRequest` / `ToolResult` / `ToolSchemas` | V4 统一工具契约：声明式元信息 + 安全入参 + 统一结果 + Schema 构造 |
+| `WriteFileTool` / `RunCommandTool` | 让 Agent 具备「写文件」与「执行命令」能力的两个新工具 |
 | `ListFilesTool` | 递归列出目录文件；支持最大深度与树形输出；返回 `List<String>` |
 | `ReadFileTool` | 读取 UTF-8 文本文件；支持 `offset`/`limit` 分页；返回 `String` |
 | `SearchCodeTool` | 搜索包含关键字/正则的行；返回 `List<Match>`（文件 + 行号 + 内容） |
@@ -290,7 +313,112 @@ mvn test
 powershell -ExecutionPolicy Bypass -File scripts\verify-deepseek.ps1
 ```
 
-## 8. 实验报告
+## 8. 六角色 Coding Agent（V4）
+
+Lab03 的 Agent 能读文件、搜代码，但不能写文件、不能执行命令，而且安全边界散落在工具内部。
+V4 补上**写文件**与**执行命令**两类工具，并把整条链路拆成六个职责单一的角色：
+
+```text
+用户 ──自然语言任务──► 控制员 ──请求──► LLM ──tool_calls──► 控制员
+                        │                                     │
+                        ├─► 守卫 GuardRole       放行 / 需确认 / 拒绝
+                        ├─► 注册员 RegistrarRole  按名字找到工具
+                        └─► 执行员 ExecutorRole   真正执行并统一兜底
+                                     │
+                                     └── Observation 回传 ──► LLM（下一轮）
+```
+
+### 8.1 六个角色（每个角色一个文件）
+
+| 角色 | 文件 | 职责 | 不负责 |
+|---|---|---|---|
+| 用户 | `roles/UserRole.java` | 提供自然语言任务；对守卫的确认请求行使最终决定权 | 解析任务、挑选工具 |
+| LLM | `roles/LlmRole.java` | 维护系统提示词与消息历史、发起 `chat` 请求 | 决定执行动作、动手做事 |
+| 注册员 | `roles/RegistrarRole.java` | 登记工具、导出 Schema、按名字查找 | 执行工具、安全判断 |
+| 守卫 | `roles/GuardRole.java` | 路径沙箱、受保护文件、高危命令的裁决 | 执行工具 |
+| 执行员 | `roles/ExecutorRole.java` | 真正调用工具、统一兜底、裁剪超长输出 | 安全判断 |
+| 控制员 | `roles/ControllerRole.java` | 驱动 ReAct 循环、解释模型意图、终止判定 | 读文件、发 HTTP、做安全判断 |
+
+装配点只有一个：[`CodingAgentCli`](src/main/java/com/agent/CodingAgentCli.java) 负责「谁依赖谁」，
+`Main` 只负责参数解析与启动。
+
+### 8.2 工具与统一接口
+
+三个 Lab02 工具现在都实现统一的 `Tool` 接口（名字、描述、JSON Schema、风险等级、路径参数、`execute`），
+并新增两个工具：
+
+| 工具 | 风险 | 说明 |
+|---|---|---|
+| `read_file` / `list_files` / `search_code` | READ | 复用 Lab02 实现，签名未变，只是多实现了一层接口 |
+| `write_file` | WRITE | 创建/覆盖/追加文件，自动创建父目录 |
+| `run_command` | EXECUTE | 在项目根目录执行命令，默认 60 秒超时；超时会结束**整棵进程树** |
+
+### 8.3 守卫策略
+
+| 操作 | 结论 |
+|---|---|
+| 只读（读文件 / 列目录 / 搜代码） | 放行 |
+| 写文件（项目内） | 需用户确认 |
+| 写 `.env`、`.git/**`、`*.key` / `*.pem` 等 | 直接拒绝 |
+| 路径越出项目根目录（`..`、绝对路径） | 直接拒绝 |
+| 执行普通命令 | 需用户确认 |
+| 高危命令（`rm -rf`、`git reset --hard`、`format`、`del /f`…） | 直接拒绝 |
+| 命令引用项目外的绝对路径或上级目录 | 直接拒绝 |
+
+`--yes` 自动同意确认（脚本化场景）；输入非 `y` 或输入结束一律按**拒绝**处理。
+需要如实说明的边界：这是「黑名单 + 人工确认」的最小防线，**不是完备沙箱**，
+强隔离仍然要靠容器、受限用户或虚拟机。
+
+### 8.4 运行
+
+```bash
+# 交互式：直接输入自然语言任务
+java -jar target/agent-cli-0.1.0.jar
+
+# 单任务模式（配合 --yes 适合脚本化验收）
+java -jar target/agent-cli-0.1.0.jar --yes --task "读取 pom.xml 的 artifactId，写入 demo/id.txt，然后运行 git log --oneline -1"
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--task "..."` / `-t` | 跑完一个任务即退出 |
+| `--yes` / `-y` | 自动同意守卫的确认请求 |
+| `--root <dir>` | 指定项目根目录（沙箱边界），默认当前目录 |
+| `--max-steps N` | 单个任务的最大步数，默认 12 |
+| `--local` | 强制回到 Lab01 的本地回显模式 |
+| `--upper` | Lab01 挑战任务 3：输出转大写 |
+
+### 8.5 实测链路（2026-10-14）
+
+```text
+用户: 读取 pom.xml 取出 artifactId、version、依赖数量；写 demo/agent-summary.md；
+      运行 git log --oneline -1 并把结果追加到文件末尾
+
+[控制员] 第 1/14 步：让 LLM 决定下一步
+[控制员] 模型请求调用工具: read_file，参数: {"path": "pom.xml"}
+[守卫] ALLOW：只读操作: read_file
+[执行员] 执行成功（1 ms）
+[控制员] 模型请求调用工具: list_files，参数: {"path": ".", "maxDepth": 1}
+[守卫] ALLOW：只读操作: list_files
+[执行员] 执行成功（20 ms）
+[控制员] 第 2/14 步：让 LLM 决定下一步
+[控制员] 模型请求调用工具: run_command，参数: {"command": "git log --oneline -1"}
+[守卫] CONFIRM：将在项目根目录执行命令: git log --oneline -1   → 已按 --yes 自动同意
+[执行员] 执行成功（123 ms）
+[控制员] 第 3/14 步：让 LLM 决定下一步
+[控制员] 模型请求调用工具: write_file，参数: {"path": "demo/agent-summary.md", ...}
+[守卫] CONFIRM：写入操作: write_file 将修改项目文件            → 已按 --yes 自动同意
+[执行员] 执行成功（18 ms）
+[控制员] 第 4/14 步：让 LLM 决定下一步
+[控制员] 模型请求调用工具: read_file，参数: {"path": "demo/agent-summary.md"}   ← 模型自查
+[执行员] 执行成功（1 ms）
+[控制员] 第 5/14 步：模型未请求工具，任务结束
+```
+
+守卫的两次拦截也已实测：读取 `../outside.txt` 被拒（路径越界）、
+`rm -rf /tmp/agent-test` 被拒（高危片段 + 项目外路径），Agent 都如实说明了原因而没有执行。
+
+## 9. 实验报告
 
 - [Lab01-Report.md](Lab01-Report.md)：Java Project Bootstrap（V1）
 - [Lab02-Report.md](Lab02-Report.md)：File Tools（V2）

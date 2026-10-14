@@ -1,5 +1,7 @@
 package com.agent.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -15,7 +17,7 @@ import java.util.stream.Stream;
  * <p>返回的是相对 {@code root} 的路径，并统一使用 {@code /} 作为分隔符 —— 这样同一份输出
  * 在 macOS 与 Windows 上完全一致，后续喂给 LLM 或写进测试断言都不会因平台而异。
  */
-public class ListFilesTool {
+public class ListFilesTool implements Tool {
 
     private final IgnoreRules ignoreRules;
 
@@ -30,6 +32,48 @@ public class ListFilesTool {
     /** 用配置文件（如 .agentignore）构造。 */
     public static ListFilesTool fromConfig(Path configFile) throws IOException {
         return new ListFilesTool(IgnoreRules.load(configFile));
+    }
+
+    // ---- 统一 Tool 接口（V4）：把 listFiles 适配成模型可调用的工具 ----
+
+    @Override
+    public String name() {
+        return "list_files";
+    }
+
+    @Override
+    public String description() {
+        return "递归列出项目内某个目录下的文件（相对路径，忽略 .agentignore 中的规则），"
+                + "maxDepth=1 时只看直接子项";
+    }
+
+    @Override
+    public JsonNode parameters() {
+        return ToolSchemas.object(
+                ToolSchemas.Param.required("path", "string", "目录路径（相对项目根目录）"),
+                ToolSchemas.Param.optional("maxDepth", "integer", "最大递归层数，默认不限"));
+    }
+
+    @Override
+    public Risk risk() {
+        return Risk.READ;
+    }
+
+    @Override
+    public List<String> pathArguments() {
+        return List.of("path");
+    }
+
+    @Override
+    public ToolResult execute(ToolRequest request) throws IOException {
+        long start = System.nanoTime();
+        Path dir = request.resolvePath("path");
+        int maxDepth = (int) request.optionalLong("maxDepth", Integer.MAX_VALUE);
+        List<String> files = listFiles(dir, maxDepth);
+        String output = files.isEmpty()
+                ? "目录下没有文件: " + request.optionalString("path", ".")
+                : "文件列表（共 " + files.size() + " 个）:\n" + String.join("\n", files);
+        return ToolResult.ok(name(), output, (System.nanoTime() - start) / 1_000_000);
     }
 
     /**

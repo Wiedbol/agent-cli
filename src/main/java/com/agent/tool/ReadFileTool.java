@@ -1,5 +1,7 @@
 package com.agent.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,7 +17,41 @@ import java.util.List;
  * （{@link IOException} 的子类），而不是被静默替换成问号，以便调用方明确区分
  * 「读取文本」与「误读二进制」。
  */
-public class ReadFileTool {
+public class ReadFileTool implements Tool {
+
+    @Override
+    public String name() {
+        return "read_file";
+    }
+
+    @Override
+    public String description() {
+        return "读取项目内一个 UTF-8 文本文件的完整内容";
+    }
+
+    @Override
+    public JsonNode parameters() {
+        return ToolSchemas.object(
+                ToolSchemas.Param.required("path", "string", "文件路径（相对项目根目录）"));
+    }
+
+    @Override
+    public Risk risk() {
+        return Risk.READ;
+    }
+
+    @Override
+    public List<String> pathArguments() {
+        return List.of("path");
+    }
+
+    @Override
+    public ToolResult execute(ToolRequest request) throws IOException {
+        long start = System.nanoTime();
+        String content = readFile(request.resolvePath("path"));
+        return ToolResult.ok(name(), "文件内容:\n" + content,
+                (System.nanoTime() - start) / 1_000_000);
+    }
 
     /**
      * 读取整个文件。

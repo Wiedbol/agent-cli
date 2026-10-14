@@ -1,5 +1,7 @@
 package com.agent.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,7 +20,7 @@ import java.util.stream.Stream;
  * <p>单文件读取失败（二进制、无权限、非法编码）时<b>跳过该文件</b>并继续搜索，
  * 因为一次搜索跨越成百上千个文件，任何一个无法解析的文件都不应该让整次搜索失败。
  */
-public class SearchCodeTool {
+public class SearchCodeTool implements Tool {
 
     /** 一条命中记录：文件（相对路径）、行号（1 起）、该行内容（已 trim）。 */
     public record Match(String file, int line, String content) {
@@ -37,6 +39,56 @@ public class SearchCodeTool {
     /** 用配置文件（如 .agentignore）构造。 */
     public static SearchCodeTool fromConfig(Path configFile) throws IOException {
         return new SearchCodeTool(IgnoreRules.load(configFile));
+    }
+
+    // ---- 统一 Tool 接口（V4）：把 searchCode 适配成模型可调用的工具 ----
+
+    @Override
+    public String name() {
+        return "search_code";
+    }
+
+    @Override
+    public String description() {
+        return "在项目某个目录中搜索包含指定关键字的代码行，返回「文件:行号: 内容」列表";
+    }
+
+    @Override
+    public JsonNode parameters() {
+        return ToolSchemas.object(
+                ToolSchemas.Param.required("keyword", "string", "要搜索的关键字（子串匹配）"),
+                ToolSchemas.Param.required("path", "string", "搜索起始目录（相对项目根目录）"));
+    }
+
+    @Override
+    public Risk risk() {
+        return Risk.READ;
+    }
+
+    @Override
+    public List<String> pathArguments() {
+        return List.of("path");
+    }
+
+    @Override
+    public ToolResult execute(ToolRequest request) throws IOException {
+        long start = System.nanoTime();
+        String keyword = request.requireString("keyword");
+        Path dir = request.resolvePath("path");
+        List<Match> matches = searchCode(keyword, dir);
+        String output;
+        if (matches.isEmpty()) {
+            output = "没有找到包含「" + keyword + "」的内容";
+        } else {
+            StringBuilder builder = new StringBuilder("搜索结果（共 " + matches.size() + " 条）:\n");
+            for (Match match : matches) {
+                builder.append(match.file()).append(':')
+                        .append(match.line()).append(": ")
+                        .append(match.content()).append('\n');
+            }
+            output = builder.toString();
+        }
+        return ToolResult.ok(name(), output, (System.nanoTime() - start) / 1_000_000);
     }
 
     /**
