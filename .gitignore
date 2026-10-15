@@ -7,3 +7,4 @@ target/
 *.pdf
 HANDOFF.md
 *-Report.md
+docs/
