@@ -423,4 +423,5 @@ java -jar target/agent-cli-0.1.0.jar --yes --task "读取 pom.xml 的 artifactId
 - [Lab01-Report.md](Lab01-Report.md)：Java Project Bootstrap（V1）
 - [Lab02-Report.md](Lab02-Report.md)：File Tools（V2）
 - [Lab03-Report.md](Lab03-Report.md)：LLM Client + ReAct Agent + Tool Calling（V3）
+- [V4-Coding-Agent-Report.md](V4-Coding-Agent-Report.md)：六角色架构说明与效果展示（V4，含截图位，见 `docs/images/`）
 - [HANDOFF.md](HANDOFF.md)：任务交接文档（工程现状、设计决策与坑位、已知问题、下一步）
