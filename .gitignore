@@ -4,8 +4,8 @@ target/
 .vscode/
 .DS_Store
 .env
-.agent/
 *.pdf
-HANDOFF.md
 *-Report.md
 docs/
+SPEC.md
+.agent/
