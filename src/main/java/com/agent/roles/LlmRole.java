@@ -4,6 +4,7 @@ import com.agent.llm.LLMClient;
 import com.agent.llm.LLMResponse;
 import com.agent.llm.Message;
 import com.agent.llm.ToolCall;
+import com.agent.session.SessionRecorder;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -21,6 +22,9 @@ import java.util.Objects;
  * 成对出现）；控制员只关心「下一步做什么」。
  *
  * <p>本类不决定调用哪个工具（由模型通过 {@code tool_calls} 决定），也不执行任何工具。
+ *
+ * <p>接入会话记录后（{@link SessionRecorder}），每往历史里追加一条消息就顺手落盘一次
+ * （需求 F①：每条消息立即写）—— 这是「历史增长」与「持久化」唯一需要对齐的地方。
  */
 public class LlmRole {
 
@@ -44,11 +48,26 @@ public class LlmRole {
             """;
 
     private final LLMClient client;
+    private final SessionRecorder recorder;
     private final List<Message> history = new ArrayList<>();
 
+    /** 不记录会话的最小构造（既有测试与不启用持久化的场景）。 */
     public LlmRole(LLMClient client) {
+        this(client, List.of(), SessionRecorder.NONE);
+    }
+
+    /**
+     * @param client   模型客户端
+     * @param restored 需要恢复的历史消息（不含 system 提示词）；空列表表示全新会话
+     * @param recorder 会话记录器；传 {@code null} 或 {@link SessionRecorder#NONE} 表示不记录
+     */
+    public LlmRole(LLMClient client, List<Message> restored, SessionRecorder recorder) {
         this.client = Objects.requireNonNull(client, "client");
+        this.recorder = recorder == null ? SessionRecorder.NONE : recorder;
         reset();
+        if (restored != null && !restored.isEmpty()) {
+            history.addAll(restored);
+        }
     }
 
     /** 清空对话历史，只保留系统提示词。 */
@@ -59,7 +78,7 @@ public class LlmRole {
 
     /** 把一条用户任务加入历史。 */
     public void beginTask(String task) {
-        history.add(Message.user(task));
+        append(Message.user(task));
     }
 
     /** 请求模型决策；返回的响应由控制员解释。 */
@@ -69,21 +88,29 @@ public class LlmRole {
 
     /** 保存「模型发起了工具调用」这条 assistant 消息（必须在下一条 tool 消息之前）。 */
     public void recordToolCalls(LLMResponse response) {
-        history.add(Message.assistant(response.content(), response.toolCalls()));
+        append(Message.assistant(response.content(), response.toolCalls()));
     }
 
     /** 保存工具执行结果（Observation）。 */
     public void recordToolResult(ToolCall call, String observation) {
-        history.add(Message.tool(call.id(), observation));
+        Message message = Message.tool(call.id(), observation);
+        history.add(message);
+        recorder.appendToolResult(message, call.arguments());
     }
 
     /** 保存最终回答。 */
     public void recordFinalAnswer(String content) {
-        history.add(Message.assistant(content));
+        append(Message.assistant(content));
     }
 
     /** 当前历史的只读快照。 */
     public List<Message> history() {
         return List.copyOf(history);
+    }
+
+    /** 追加一条消息并立即记录（F①：每条消息立即落盘）。 */
+    private void append(Message message) {
+        history.add(message);
+        recorder.appendMessage(message);
     }
 }

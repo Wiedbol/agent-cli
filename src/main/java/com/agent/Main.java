@@ -3,6 +3,9 @@ package com.agent;
 import com.agent.llm.ApiKeyLoader;
 import com.agent.llm.DeepSeekClient;
 import com.agent.roles.ControllerRole;
+import com.agent.session.SessionExporter;
+import com.agent.session.SessionPaths;
+import com.agent.session.SessionStore;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -40,6 +43,14 @@ public class Main {
             return;
         }
 
+        Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
+        Path sessionDir = SessionPaths.resolveDir(root, options.sessionDir());
+
+        if (options.exportId() != null) {
+            exportSession(sessionDir, options.exportId());
+            return;
+        }
+
         String apiKey = ApiKeyLoader.loadDeepSeekKey();
         if (apiKey == null || apiKey.isBlank()) {
             if (options.task() != null) {
@@ -54,18 +65,64 @@ public class Main {
             return;
         }
 
-        Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
+        SessionStore session;
+        try {
+            session = openSession(sessionDir, options);
+        } catch (IOException failed) {
+            System.err.println("会话初始化失败：" + failed.getMessage());
+            System.exit(4);
+            return;
+        }
+
         CodingAgentCli cli = new CodingAgentCli(root,
                 new DeepSeekClient(apiKey),
                 options.autoApprove(),
                 options.maxSteps(),
                 ConsoleStreams.newStdinReader(),
                 System.out,
-                System.err);
+                System.err,
+                session);
 
         int exitCode = options.task() != null ? cli.runTask(options.task()) : cli.runRepl();
         if (exitCode != 0) {
             System.exit(exitCode);
+        }
+    }
+
+    /**
+     * 按命令行参数决定这次运行使用哪个会话。
+     *
+     * <ul>
+     *   <li>{@code --task}：独立任务会话 {@code task-<时间戳>.jsonl}，不续聊（R③）；</li>
+     *   <li>{@code --resume <id>}：续上指定会话；</li>
+     *   <li>{@code --new}：强制新建；</li>
+     *   <li>{@code --session <名字>}：同名则续、否则新建；</li>
+     *   <li>都没有：自动续上一次会话，没有历史就新建（D③ 的默认行为）。</li>
+     * </ul>
+     */
+    private static SessionStore openSession(Path dir, Options options) throws IOException {
+        if (options.task() != null) {
+            return SessionStore.start(dir, SessionStore.Mode.NEW, "task-" + SessionPaths.timestampName());
+        }
+        if (options.resume() != null) {
+            return SessionStore.start(dir, SessionStore.Mode.RESUME, options.resume());
+        }
+        if (options.newSession()) {
+            return SessionStore.start(dir, SessionStore.Mode.NEW, options.sessionName());
+        }
+        if (options.sessionName() != null) {
+            return SessionStore.start(dir, SessionStore.Mode.NAMED, options.sessionName());
+        }
+        return SessionStore.start(dir, SessionStore.Mode.AUTO, null);
+    }
+
+    /** 导出会话为 markdown（N①）；不需要 API Key，因此放在 Key 检查之前。 */
+    private static void exportSession(Path dir, String id) {
+        try {
+            System.out.print(SessionExporter.toMarkdown(dir, id));
+        } catch (IOException failed) {
+            System.err.println("导出失败：" + failed.getMessage());
+            System.exit(3);
         }
     }
 
@@ -78,9 +135,15 @@ public class Main {
      * @param upperCase  是否把输出转成大写（{@code --upper}，Lab01 挑战任务 3）
      * @param root       项目根目录（沙箱边界），默认当前工作目录
      * @param maxSteps   单个任务的最大步数
+     * @param resume     要恢复的会话名（{@code --resume}），可为 {@code latest}
+     * @param newSession 是否强制新建会话（{@code --new}）
+     * @param sessionName 具名会话（{@code --session}）：存在则续、否则新建
+     * @param sessionDir 会话目录（{@code --session-dir}），{@code user} 表示用户目录
+     * @param exportId   要导出成 markdown 的会话（{@code --export}），不配置则正常运行
      */
     record Options(String task, boolean autoApprove, boolean local, boolean upperCase,
-                   Path root, int maxSteps) {
+                   Path root, int maxSteps, String resume, boolean newSession,
+                   String sessionName, String sessionDir, String exportId) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -89,6 +152,11 @@ public class Main {
             boolean upperCase = false;
             Path root = null;
             int maxSteps = ControllerRole.DEFAULT_MAX_STEPS;
+            String resume = null;
+            boolean newSession = false;
+            String sessionName = null;
+            String sessionDir = null;
+            String exportId = null;
 
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
@@ -112,13 +180,35 @@ public class Main {
                                 maxSteps = Integer.parseInt(args[++i]);
                             }
                         }
+                        case "--new" -> newSession = true;
+                        case "--resume" -> {
+                            if (i + 1 < args.length) {
+                                resume = args[++i];
+                            }
+                        }
+                        case "--session" -> {
+                            if (i + 1 < args.length) {
+                                sessionName = args[++i];
+                            }
+                        }
+                        case "--session-dir" -> {
+                            if (i + 1 < args.length) {
+                                sessionDir = args[++i];
+                            }
+                        }
+                        case "--export" -> {
+                            if (i + 1 < args.length) {
+                                exportId = args[++i];
+                            }
+                        }
                         default -> {
                             // 未知参数忽略：CLI 由脚本调用，不能因为多一个参数就跑不起来
                         }
                     }
                 }
             }
-            return new Options(task, autoApprove, local, upperCase, root, maxSteps);
+            return new Options(task, autoApprove, local, upperCase, root, maxSteps,
+                    resume, newSession, sessionName, sessionDir, exportId);
         }
     }
 

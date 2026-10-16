@@ -34,6 +34,12 @@ agent-cli/
     │   │   ├── GuardRole.java          #   守卫：沙箱与高危命令裁决
     │   │   ├── ExecutorRole.java       #   执行员：执行 + 兜底 + 裁剪
     │   │   └── ControllerRole.java     #   控制员：ReAct 循环与终止判定
+    │   ├── session/                    # 会话记录（聊天记录持久化）
+    │   │   ├── SessionRecorder.java    #   记录接口（NONE = 不记录）
+    │   │   ├── SessionStore.java       #   JSONL 追加写 / 读回 / 5 MB 轮转
+    │   │   ├── SessionPaths.java       #   目录与命名规则
+    │   │   ├── SessionExporter.java    #   导出为可读 markdown
+    │   │   └── Redactor.java           #   落盘前的敏感内容过滤
     │   ├── llm/
     │   │   ├── LLMClient.java          # 模型客户端接口（依赖倒置的边界）
     │   │   ├── DeepSeekClient.java     # Chat Completions 实现
@@ -418,7 +424,103 @@ java -jar target/agent-cli-0.1.0.jar --yes --task "读取 pom.xml 的 artifactId
 守卫的两次拦截也已实测：读取 `../outside.txt` 被拒（路径越界）、
 `rm -rf /tmp/agent-test` 被拒（高危片段 + 项目外路径），Agent 都如实说明了原因而没有执行。
 
-## 9. 实验报告
+## 9. 会话记录与恢复（聊天记录持久化）
+
+Agent 的对话默认会**落盘保存**，重启后可以接着上次继续聊；记录按「完整 ReAct 轨迹」保存，
+包含每次工具调用的参数与结果，方便事后复盘。
+
+```text
+用户任务 ──► 控制员 ──► LLM ──► 守卫 ──► 执行员
+    │                                      │
+    └────────── 每条消息立即追加写 ◄────────┘
+                     │
+        .agent/sessions/<会话名>.jsonl
+```
+
+### 9.1 默认行为的变化（重要）
+
+| 场景 | 现在的行为 |
+|---|---|
+| 直接启动（无参数） | **自动续上一次会话**：打印「续用会话 <名字>，共恢复 N 条历史消息」 |
+| `--new` | 不加载历史，新开一个时间戳会话 |
+| `--session <名字>` | 同名会话存在就续上，否则新建 |
+| `--resume <id>` | 明确续上指定会话（`latest` 表示最近一个） |
+| `clear`（会话中） | 清空对话历史并**另开一个新会话**；旧记录一条都不删 |
+| `--local` | 本地回显模式，**不记录**（Lab01 行为保持不变） |
+
+### 9.2 文件与目录
+
+默认目录是项目内的 `.agent/sessions/`（已加入 `.gitignore`，不会误提交）；
+用 `--session-dir user` 可切到用户目录 `~/.agent-cli/sessions/`，也可以直接给路径。
+
+每个会话是一到多个 JSONL 分片，一行一个事件：
+
+```jsonl
+{"type":"meta","at":"2026-10-16T10:19:42","sessionId":"live-demo","part":1,"resumed":false}
+{"type":"message","at":"2026-10-16T10:19:42","role":"user","content":"记住：我最喜欢的颜色是蓝色"}
+{"type":"turn","at":"2026-10-16T10:19:43","step":1,"elapsedMillis":984,"promptTokens":971,"completionTokens":5,"tools":"-"}
+{"type":"message","at":"2026-10-16T10:19:43","role":"assistant","content":"好的，已记住。"}
+```
+
+| 事件 | 内容 |
+|---|---|
+| `meta` | 会话开始 / 继续记录、分片序号 |
+| `message` | 一条历史消息（`role` 为 user / assistant / tool，带 `toolCalls` 或 `toolCallId`） |
+| `turn` | 每轮元数据：时间戳、耗时、token 用量、该轮调用的工具 |
+
+两条工程约定：**单条消息立即追加写**（异常中断最多丢当前这一条）；
+**单个分片超过 5 MB 就轮转**为 `name.part2.jsonl`，恢复时按顺序全部读回。
+
+### 9.3 敏感内容过滤
+
+落盘前会过滤三类内容（命中即把**整条内容**替换为 `[已过滤：疑似敏感内容]`，并记 `"redacted": true`）：
+
+1. 工具参数里的 `path` 指向 `.env`、`*.key`、`*.pem`、`*.p12`、`*.keystore`、`id_rsa*`；
+2. 内容里出现 `password` / `secret` / `token` / `api_key` 等且形如「键 = 值」的行；
+3. 形如 `sk-` 开头且长度 ≥ 20 的疑似密钥串。
+
+过滤**只影响落盘文本**，内存中的历史保持原文，因此不影响模型后续推理；
+代价是复盘时看到的是占位符。API Key 从不进入对话历史，记录文件里也不会出现。
+
+### 9.4 导出与查阅
+
+```bash
+# 导出成人类可读的 markdown（不需要 API Key）
+java -jar target/agent-cli-0.1.0.jar --export live-demo > chat.md
+
+# 最近一次会话
+java -jar target/agent-cli-0.1.0.jar --export latest
+```
+
+导出的 markdown 包含每轮的时间/耗时/token、每次工具调用的参数与结果，以及被过滤条目的标记。
+
+### 9.5 实测（2026-10-16）
+
+```text
+# 第一轮：新建具名会话
+> 记住一个事实：我最喜欢的颜色是蓝色
+Agent > 好的，已记住。
+
+# 第二轮：不带任何参数启动（默认自动续聊）
+续用会话 live-demo（live-demo.jsonl），共恢复 2 条历史消息
+> 我最喜欢的颜色是什么？
+Agent > 蓝色                      ← 历史确实恢复了
+
+# clear：另开新会话，旧记录保留
+对话历史已清空，并开始新会话 2026-10-16-102029（旧记录已保留）。
+```
+
+### 9.6 新增命令行参数
+
+| 参数 | 作用 |
+|---|---|
+| `--new` | 强制新建会话，不加载历史 |
+| `--resume <id>` | 续上指定会话（`latest` = 最近一个） |
+| `--session <名字>` | 具名会话：存在则续、否则新建 |
+| `--session-dir <路径\|user>` | 会话目录；`user` 表示用户目录 |
+| `--export <id>` | 导出会话为 markdown 后退出（不需要 Key） |
+
+## 10. 实验报告
 
 - [Lab01-Report.md](Lab01-Report.md)：Java Project Bootstrap（V1）
 - [Lab02-Report.md](Lab02-Report.md)：File Tools（V2）

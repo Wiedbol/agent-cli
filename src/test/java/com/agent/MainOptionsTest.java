@@ -62,4 +62,33 @@ class MainOptionsTest {
         assertEquals("任务", Main.Options.parse(new String[]{"--unknown", "--task", "任务"}).task());
         assertNull(Main.Options.parse(null).task());
     }
+
+    // ---- 会话持久化相关参数（SPEC.md 定稿）----
+
+    @Test
+    void shouldDefaultToNoSessionOverrides() {
+        Main.Options options = Main.Options.parse(new String[0]);
+
+        assertNull(options.resume());
+        assertNull(options.sessionName());
+        assertNull(options.sessionDir());
+        assertNull(options.exportId());
+        assertFalse(options.newSession());
+    }
+
+    @Test
+    void shouldParseSessionFlags() {
+        Main.Options options = Main.Options.parse(new String[]{
+                "--new", "--session", "demo1", "--session-dir", "user", "--resume", "latest"});
+
+        assertTrue(options.newSession());
+        assertEquals("demo1", options.sessionName());
+        assertEquals("user", options.sessionDir());
+        assertEquals("latest", options.resume());
+    }
+
+    @Test
+    void shouldParseExportFlag() {
+        assertEquals("latest", Main.Options.parse(new String[]{"--export", "latest"}).exportId());
+    }
 }

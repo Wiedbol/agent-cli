@@ -2,6 +2,7 @@ package com.agent.roles;
 
 import com.agent.llm.LLMResponse;
 import com.agent.llm.ToolCall;
+import com.agent.session.SessionRecorder;
 import com.agent.tool.Tool;
 import com.agent.tool.ToolResult;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -11,6 +12,7 @@ import com.fasterxml.jackson.databind.node.NullNode;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * 角色六：<b>控制员</b>。
@@ -38,9 +40,17 @@ public class ControllerRole {
     private final UserRole user;
     private final int maxSteps;
     private final PrintStream trace;
+    private final SessionRecorder recorder;
 
     public ControllerRole(LlmRole llm, RegistrarRole registrar, GuardRole guard,
                           ExecutorRole executor, UserRole user, int maxSteps, PrintStream trace) {
+        this(llm, registrar, guard, executor, user, maxSteps, trace, SessionRecorder.NONE);
+    }
+
+    /** 带会话记录的构造：每轮结束写一条 turn 事件（时间戳 / 耗时 / token / 工具名）。 */
+    public ControllerRole(LlmRole llm, RegistrarRole registrar, GuardRole guard,
+                          ExecutorRole executor, UserRole user, int maxSteps, PrintStream trace,
+                          SessionRecorder recorder) {
         this.llm = llm;
         this.registrar = registrar;
         this.guard = guard;
@@ -48,6 +58,7 @@ public class ControllerRole {
         this.user = user;
         this.maxSteps = maxSteps;
         this.trace = trace;
+        this.recorder = recorder == null ? SessionRecorder.NONE : recorder;
     }
 
     /**
@@ -62,11 +73,14 @@ public class ControllerRole {
             trace("[控制员] 第 " + step + "/" + maxSteps + " 步：让 LLM 决定下一步");
 
             LLMResponse response;
+            long startedAt = System.nanoTime();
             try {
                 response = llm.ask(registrar.toolDefinitions());
             } catch (IOException failed) {
                 return "LLM 调用失败: " + failed.getMessage();
             }
+            recorder.appendTurn(step, (System.nanoTime() - startedAt) / 1_000_000,
+                    response.promptTokens(), response.completionTokens(), toolNamesOf(response));
 
             if (!response.hasToolCalls()) {
                 String answer = response.content() == null ? "" : response.content();
@@ -137,5 +151,15 @@ public class ControllerRole {
         if (trace != null) {
             trace.println(message);
         }
+    }
+
+    /** 该轮请求调用的工具名，用于 turn 事件（没有则为 {@code "-"}）。 */
+    private static String toolNamesOf(LLMResponse response) {
+        if (!response.hasToolCalls()) {
+            return "-";
+        }
+        return response.toolCalls().stream()
+                .map(ToolCall::name)
+                .collect(Collectors.joining(", "));
     }
 }
