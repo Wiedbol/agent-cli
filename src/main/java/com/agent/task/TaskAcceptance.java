@@ -58,6 +58,8 @@ public final class TaskAcceptance {
                     StandardCharsets.UTF_8);
             Files.delete(report);
         }
+        task.checkpoint.reserveAcceptance();
+        store.save(task);
         CommandResult process = runner.run(root, task.command, 60);
         Set<String> identities = new HashSet<>();
         Map<String, String> hashes = new java.util.TreeMap<>();
@@ -106,6 +108,8 @@ public final class TaskAcceptance {
     private Evidence recordEvidence(TaskRecord task, String id, Evidence evidence) throws IOException {
         store.saveEvidence(task, id, evidence);
         task.files = evidence.files();
+        task.checkpoint.acceptancePending = false;
+        task.checkpoint.acceptanceResult = id;
         store.save(task);
         return evidence;
     }

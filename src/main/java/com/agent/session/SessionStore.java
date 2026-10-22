@@ -108,6 +108,15 @@ public class SessionStore implements SessionRecorder {
         return store;
     }
 
+    /** 原会话只追加审计记录，任务执行进度由独立检查点恢复。 */
+    public static SessionStore resumeStrict(Path dir, String id) throws IOException {
+        if (!exists(dir, id)) { throw new IOException("任务聊天记录缺失: " + id); }
+        SessionStore store = new SessionStore(dir, id, true, lastPart(dir, id), SessionPaths.MAX_BYTES, null);
+        store.strict = true;
+        store.writeMeta(true);
+        return store;
+    }
+
     /** 供测试注入更小的轮转阈值与告警流。 */
     public static SessionStore start(Path dir, Mode mode, String name, long maxBytes, PrintStream warn)
             throws IOException {
@@ -190,7 +199,12 @@ public class SessionStore implements SessionRecorder {
             node.put("toolCallId", toolCallId);
         }
         if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
-            node.set("toolCalls", MAPPER.valueToTree(message.toolCalls()));
+            var calls = MAPPER.valueToTree(message.toolCalls());
+            for (var call : calls) {
+                String arguments = call.path("function").path("arguments").asText();
+                ((ObjectNode) call.path("function")).put("arguments", Redactor.redact(arguments, arguments).text());
+            }
+            node.set("toolCalls", calls);
         }
         if (content.redacted()) {
             node.put("redacted", true);

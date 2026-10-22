@@ -25,6 +25,40 @@ public final class TaskRecord {
     public List<EvidenceRef> checks = new ArrayList<>();
     public List<Agreement> agreementHistory = new ArrayList<>();
     public Progress progress = new Progress();
+    public Checkpoint checkpoint = new Checkpoint();
+
+    public enum Phase { BASELINE, CODING, ACCEPTANCE, COMPLETE }
+
+    /** 消息与操作结果同一快照提交，聊天日志缺行不改变恢复位置。 */
+    public static final class Checkpoint {
+        public Phase phase = Phase.BASELINE;
+        public List<com.agent.llm.Message> messages = new ArrayList<>();
+        public String feedback;
+        public boolean completionClaim;
+        public boolean acceptancePending;
+        public String acceptanceResult;
+        public boolean acceptanceProcessed;
+
+        /** 统一清除上一轮验收关联，避免恢复误用旧证据。 */
+        public void beginAcceptance(boolean claim) {
+            phase = Phase.ACCEPTANCE;
+            completionClaim = claim;
+            reserveAcceptance();
+            acceptancePending = false;
+        }
+
+        public void reserveAcceptance() {
+            acceptancePending = true;
+            acceptanceResult = null;
+            acceptanceProcessed = false;
+        }
+
+        public void restartAgreement() {
+            beginAcceptance(false);
+            phase = Phase.BASELINE;
+            feedback = null;
+        }
+    }
 
     /** 累计消耗随任务落盘，不随一次控制循环重新开始。 */
     public static final class Progress {
@@ -54,6 +88,8 @@ public final class TaskRecord {
         public Integer promptTokens;
         public Integer completionTokens;
         public List<Operation> operations = new ArrayList<>();
+        public String content;
+        public boolean roundFinished;
     }
 
     public static final class Operation {
@@ -63,6 +99,8 @@ public final class TaskRecord {
         public OperationState status = OperationState.REQUESTED;
         public String observation = "";
         public Map<String, Change> changes = new LinkedHashMap<>();
+        public String risk;
+        public int attempts;
     }
 
     public record Change(String before, String after) { }

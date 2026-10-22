@@ -2,6 +2,7 @@ package com.agent.task;
 
 import com.agent.llm.LLMResponse;
 import com.agent.llm.ToolCall;
+import com.agent.llm.Message;
 import com.agent.roles.ControllerRole;
 import com.agent.task.TaskRecord.DecisionState;
 import com.agent.task.TaskRecord.OperationState;
@@ -37,6 +38,30 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         this.interactive = interactive;
     }
 
+    @Override public void taskStarted(String feedback) {
+        task.checkpoint.messages.add(Message.user(feedback));
+        task.checkpoint.feedback = null;
+        save();
+    }
+
+    @Override public ControllerRole.Continuation continuation() {
+        LLMResponse pending = null;
+        if (!task.progress.decisions.isEmpty()) {
+            decision = task.progress.decisions.get(task.progress.decisions.size() - 1);
+            if (decision.status == DecisionState.RESPONDED && !decision.roundFinished && !decision.operations.isEmpty()) {
+                operationIndex = 0;
+                while (operationIndex < decision.operations.size()) {
+                    var op = decision.operations.get(operationIndex);
+                    if (op.status != OperationState.SUCCEEDED && op.status != OperationState.FAILED) { break; }
+                    operationIndex++;
+                }
+                pending = new LLMResponse(decision.content, decision.operations.stream()
+                        .map(op -> new ToolCall(op.callId, new ToolCall.Function(op.tool, op.arguments))).toList(), -1, -1);
+            }
+        }
+        return new ControllerRole.Continuation(java.util.List.copyOf(task.checkpoint.messages), pending, operationIndex);
+    }
+
     @Override public void beforeRequest() {
         if (task.progress.requests >= task.progress.maxRequests) { throw new Pause("累计模型请求预算已耗尽"); }
         decision = new TaskRecord.Decision();
@@ -61,6 +86,9 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
     @Override public void responded(LLMResponse response, long millis) {
         decision.status = DecisionState.RESPONDED;
         decision.durationMillis = millis;
+        decision.content = response.content();
+        task.checkpoint.messages.add(Message.assistant(response.content(), response.toolCalls()));
+        if (!response.hasToolCalls()) { task.checkpoint.beginAcceptance(true); }
         if (response.promptTokens() >= 0) {
             decision.promptTokens = response.promptTokens();
             task.progress.promptTokens += response.promptTokens();
@@ -93,8 +121,11 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         currentRisk = risk;
         try { before = WorkspaceSnapshot.capture(root); }
         catch (IOException failure) { throw new UncheckedIOException(failure); }
-        decision.operations.get(operationIndex).status = OperationState.RUNNING;
+        var operation = decision.operations.get(operationIndex);
+        operation.attempts++;
         task.progress.tools++;
+        operation.status = OperationState.RUNNING;
+        operation.risk = risk.name();
         save();
     }
 
@@ -110,6 +141,7 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         TaskRecord.Operation operation = decision.operations.get(operationIndex++);
         operation.status = success ? OperationState.SUCCEEDED : OperationState.FAILED;
         operation.observation = observation;
+        task.checkpoint.messages.add(Message.tool(call.id(), observation));
         String request = WorkspaceSnapshot.hash((call.name() + "\n" + call.arguments())
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         if (success) { task.progress.toolErrors.remove(request); }
@@ -141,6 +173,8 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
 
     @Override public void roundFinished() {
         advanceRound();
+        decision.roundFinished = true;
+        if (repeated()) { task.checkpoint.beginAcceptance(false); }
         save();
         if (repeated()) { throw new Recheck(); }
     }

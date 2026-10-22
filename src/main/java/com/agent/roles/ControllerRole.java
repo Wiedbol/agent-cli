@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.node.NullNode;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Optional;
+import java.util.List;
+import com.agent.llm.Message;
 import java.util.stream.Collectors;
 
 /**
@@ -31,11 +33,14 @@ public class ControllerRole {
 
     public enum StopReason { COMPLETED, MODEL_FAILED, LIMIT_REACHED }
     public record RunResult(StopReason reason, String answer) { }
+    public record Continuation(List<Message> messages, LLMResponse response, int nextTool) { }
 
     /** 管理任务严格保存执行边界，普通聊天不引入任务持久化语义。 */
     public interface DecisionObserver {
         DecisionObserver NONE = new DecisionObserver() { };
         default void beforeRequest() { }
+        default void taskStarted(String feedback) { }
+        default Continuation continuation() { return null; }
         default void responded(LLMResponse response, long millis) { }
         default void modelFailed(IOException failure, long millis) { }
         default void beforeTool(ToolCall call, Tool.Risk risk) { }
@@ -100,24 +105,34 @@ public class ControllerRole {
     }
 
     public RunResult runTaskResult(String task, DecisionObserver observer) {
-        llm.beginTask(task);
+        Continuation continued = observer.continuation();
+        if (continued != null) { llm.restoreHistory(continued.messages()); }
+        if (task != null) {
+            observer.taskStarted(task);
+            llm.beginTask(task);
+            continued = null;
+        }
 
         for (int step = 1; step <= maxSteps; step++) {
             trace("[控制员] 第 " + step + "/" + maxSteps + " 步：让 LLM 决定下一步");
 
             LLMResponse response;
-            checkInputs.run();
-            observer.beforeRequest();
             long startedAt = System.nanoTime();
-            try {
-                response = llm.ask(registrar.toolDefinitions());
-            } catch (IOException failed) {
-                observer.modelFailed(failed, (System.nanoTime() - startedAt) / 1_000_000);
-                return new RunResult(StopReason.MODEL_FAILED, "LLM 调用失败: " + failed.getMessage());
+            boolean pending = continued != null && continued.response() != null;
+            if (pending) { response = continued.response(); }
+            else {
+                checkInputs.run();
+                observer.beforeRequest();
+                try {
+                    response = llm.ask(registrar.toolDefinitions());
+                } catch (IOException failed) {
+                    observer.modelFailed(failed, (System.nanoTime() - startedAt) / 1_000_000);
+                    return new RunResult(StopReason.MODEL_FAILED, "LLM 调用失败: " + failed.getMessage());
+                }
+                observer.responded(response, (System.nanoTime() - startedAt) / 1_000_000);
+                recorder.appendTurn(step, (System.nanoTime() - startedAt) / 1_000_000,
+                        response.promptTokens(), response.completionTokens(), toolNamesOf(response));
             }
-            observer.responded(response, (System.nanoTime() - startedAt) / 1_000_000);
-            recorder.appendTurn(step, (System.nanoTime() - startedAt) / 1_000_000,
-                    response.promptTokens(), response.completionTokens(), toolNamesOf(response));
 
             if (!response.hasToolCalls()) {
                 String answer = response.content() == null ? "" : response.content();
@@ -126,9 +141,13 @@ public class ControllerRole {
                 return new RunResult(StopReason.COMPLETED, answer);
             }
 
-            llm.recordToolCalls(response);
-            for (ToolCall call : response.toolCalls()) {
+            if (!pending) { llm.recordToolCalls(response); }
+            int nextTool = pending ? continued.nextTool() : 0;
+            continued = null;
+            for (int index = nextTool; index < response.toolCalls().size(); index++) {
+                ToolCall call = response.toolCalls().get(index);
                 checkInputs.run();
+                trace("[控制员] 模型请求调用工具: " + call.name() + "，参数: " + call.arguments());
                 observer.beforeTool(call, registrar.find(call.name()).map(Tool::risk).orElse(Tool.Risk.READ));
                 DispatchResult result = dispatch(call, observer);
                 observer.toolFinished(call, result.success(), result.observation());
@@ -146,8 +165,6 @@ public class ControllerRole {
     private record DispatchResult(boolean success, String observation) { }
 
     private DispatchResult dispatch(ToolCall call, DecisionObserver observer) {
-        trace("[控制员] 模型请求调用工具: " + call.name() + "，参数: " + call.arguments());
-
         Optional<Tool> found = registrar.find(call.name());
         if (found.isEmpty()) {
             return new DispatchResult(false, "未知工具: " + call.name() + "（可用工具: " + String.join(", ", registrar.names()) + "）");

@@ -242,6 +242,25 @@ public class CodingAgentCli {
         } catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
     }
 
+    public int resumeManagedTask(String id) {
+        return resumeManagedTask(id, ConsoleStreams.hasInteractiveConsole());
+    }
+
+    /** 本次普通工具审批选择独立于上次进程，不继承旧 --yes。 */
+    public int resumeManagedTask(String id, boolean interactive) {
+        if (client == null) { err.println("任务需要模型配置"); return 2; }
+        try {
+            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection) ->
+                    new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
+                            managedSession, commandRunner, protection).controller, out).resume(id, interactive);
+            return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt(); err.println("任务恢复被中断"); return 4;
+        } catch (IOException | java.io.UncheckedIOException failed) {
+            err.println("任务恢复或持久化失败: " + failed.getMessage()); return 4;
+        }
+    }
+
     public int showTask(String id) {
         try { printTask(new TaskStore(root).read(id)); return 0; }
         catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }

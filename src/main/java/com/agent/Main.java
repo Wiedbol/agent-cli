@@ -70,8 +70,8 @@ public class Main {
 
         String apiKey = ApiKeyLoader.loadDeepSeekKey();
         if (apiKey == null || apiKey.isBlank()) {
-            if (options.task() != null) {
-                System.err.println("错误：--task 需要 DeepSeek Key。");
+            if (options.task() != null || options.resumeTask() != null) {
+                System.err.println("错误：--task / --resume-task 需要 DeepSeek Key。");
                 System.err.println("      请在项目根目录 .env 写入 DEEPSEEK_API_KEY=你的Key。");
                 System.exit(2);
                 return;
@@ -84,7 +84,7 @@ public class Main {
 
         SessionStore session;
         try {
-            session = options.task() == null ? openSession(sessionDir, options) : null;
+            session = options.task() == null && options.resumeTask() == null ? openSession(sessionDir, options) : null;
         } catch (IOException failed) {
             System.err.println("会话初始化失败：" + failed.getMessage());
             System.exit(4);
@@ -100,7 +100,7 @@ public class Main {
                 System.err,
                 session);
 
-        int exitCode = options.task() != null
+        int exitCode = options.resumeTask() != null ? cli.resumeManagedTask(options.resumeTask()) : options.task() != null
                 ? cli.startManagedTask(options.task(), options.acceptanceCommand()) : cli.runRepl();
         if (exitCode != 0) {
             System.exit(exitCode);
@@ -159,7 +159,8 @@ public class Main {
     record Options(String task, boolean autoApprove, boolean local, boolean upperCase,
                    Path root, int maxSteps, String resume, boolean newSession,
                    String sessionName, String sessionDir, String exportId,
-                   boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId) {
+                   boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId,
+                   String resumeTask) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -178,6 +179,7 @@ public class Main {
             String acceptanceCommand = null;
             String reagreeId = null;
             String budgetTaskId = null;
+            String resumeTask = null;
             boolean maximumSpecified = false;
 
             if (args != null) {
@@ -185,11 +187,12 @@ public class Main {
                     String arg = args[i];
                     switch (arg) {
                         case "--tasks" -> tasks = true;
-                        case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget" -> {
+                        case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget", "--resume-task" -> {
                             if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
                                 throw new IllegalArgumentException(arg + " 需要非空参数");
                             }
                             if (arg.equals("--task-status")) { taskStatus = args[++i]; }
+                            else if (arg.equals("--resume-task")) { resumeTask = args[++i]; }
                             else if (arg.equals("--task-budget")) { budgetTaskId = args[++i]; }
                             else if (arg.equals("--reagree-acceptance")) { reagreeId = args[++i]; }
                             else { acceptanceCommand = args[++i]; }
@@ -241,7 +244,7 @@ public class Main {
                 }
             }
             int managedModes = (task == null ? 0 : 1) + (tasks ? 1 : 0) + (taskStatus == null ? 0 : 1)
-                    + (reagreeId == null ? 0 : 1) + (budgetTaskId == null ? 0 : 1);
+                    + (reagreeId == null ? 0 : 1) + (budgetTaskId == null ? 0 : 1) + (resumeTask == null ? 0 : 1);
             if (managedModes > 1 || managedModes > 0 && (local || resume != null || newSession
                     || sessionName != null || sessionDir != null || exportId != null)) {
                 throw new IllegalArgumentException("管理任务、查询、本地回显和聊天恢复参数不能混用");
@@ -256,8 +259,11 @@ public class Main {
             if (budgetTaskId != null && !maximumSpecified) {
                 throw new IllegalArgumentException("--task-budget 必须明确提供 --max-steps 新总预算");
             }
+            if (resumeTask != null && maximumSpecified) {
+                throw new IllegalArgumentException("恢复沿用已记录总预算；提高额度请使用 --task-budget");
+            }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
-                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId);
+                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId, resumeTask);
         }
     }
 

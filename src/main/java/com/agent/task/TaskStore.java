@@ -77,7 +77,7 @@ public final class TaskStore {
 
     public TaskRecord create(String goal, String command) throws IOException {
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 3;
+        task.schemaVersion = 4;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
@@ -114,6 +114,25 @@ public final class TaskStore {
             }
         }
         redactText(persisted.path("progress"));
+        var argumentsByCall = new java.util.HashMap<String, String>();
+        for (var message : persisted.path("checkpoint").path("messages")) {
+            for (var call : message.path("toolCalls")) {
+                String arguments = call.path("function").path("arguments").asText();
+                argumentsByCall.put(call.path("id").asText(), arguments);
+                ((com.fasterxml.jackson.databind.node.ObjectNode) call.path("function"))
+                        .put("arguments", Redactor.redact(arguments, arguments).text());
+            }
+            if (message.path("role").asText().equals("tool")) {
+                ((com.fasterxml.jackson.databind.node.ObjectNode) message).put("content", Redactor.redact(
+                        message.path("content").asText(), argumentsByCall.get(message.path("toolCallId").asText())).text());
+            }
+        }
+        redactText(persisted.path("checkpoint"));
+        // 摘要覆盖脱敏后落盘的全部状态；不使用 previous 快照猜测执行是否成功。
+        if (task.schemaVersion >= 4) {
+            ((com.fasterxml.jackson.databind.node.ObjectNode) persisted).put("checkpointSha256",
+                    WorkspaceSnapshot.hash(JSON.writeValueAsBytes(persisted)));
+        }
         atomicWrite(state, JSON.writeValueAsBytes(persisted));
     }
 
@@ -151,25 +170,33 @@ public final class TaskStore {
                 || !node.hasNonNull("acceptanceFiles") || !node.hasNonNull("files") || !node.hasNonNull("checks")) {
             throw new IOException("任务状态缺少必要字段");
         }
+        String digest = node.path("checkpointSha256").asText();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) node).remove("checkpointSha256");
+        if (node.path("schemaVersion").asInt() >= 4) {
+            if (!WorkspaceSnapshot.hash(JSON.writeValueAsBytes(node)).equals(digest)) {
+                throw new IOException("任务检查点损坏，完整性校验失败");
+            }
+        }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 3) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 4) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
-                || task.progress == null || task.schemaVersion == 3 && !node.hasNonNull("progress")) {
+                || task.progress == null || task.schemaVersion >= 3 && !node.hasNonNull("progress")) {
             throw new IOException("任务状态损坏或版本不支持");
         }
         if (!root.toString().replace('\\', '/').equals(task.project)) {
             throw new IOException("任务属于其他项目，移动或复制后必须新建任务");
         }
-        if (task.schemaVersion == 3) {
+        if (task.schemaVersion >= 3) {
             for (String field : List.of("maxRequests", "requests", "tools", "promptTokens", "completionTokens",
                     "unknownRequests", "elapsedMillis", "errors", "decisions", "budgetChanges",
                     "acceptanceErrors", "toolErrors", "errorDescriptions")) {
                 if (!node.path("progress").hasNonNull(field)) { throw new IOException("任务消耗记录损坏: " + field); }
             }
-            validateProgress(task.progress);
+            validateProgress(task.progress, task.schemaVersion >= 4);
         }
+        if (task.schemaVersion >= 4) { TaskCheckpoint.validate(task, node.path("checkpoint")); }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
         for (TaskRecord.Agreement agreement : task.agreementHistory) {
             if (agreement == null || agreement.version() == null || agreement.command() == null
@@ -187,7 +214,7 @@ public final class TaskStore {
         return task;
     }
 
-    private void validateProgress(TaskRecord.Progress progress) throws IOException {
+    private void validateProgress(TaskRecord.Progress progress, boolean checkpointed) throws IOException {
         if (progress.maxRequests <= 0 || progress.requests < 0 || progress.requests > progress.maxRequests
                 || progress.tools < 0 || progress.promptTokens < 0 || progress.completionTokens < 0
                 || progress.unknownRequests < 0 || progress.elapsedMillis < 0 || progress.decisions == null
@@ -212,7 +239,11 @@ public final class TaskStore {
                 if (operation == null || operation.status == null || operation.changes == null) {
                     throw new IOException("工具操作记录损坏");
                 }
-                if (operation.status != TaskRecord.OperationState.REQUESTED) { tools++; }
+                if (checkpointed) {
+                    if (operation.attempts < 0 || (operation.status == TaskRecord.OperationState.REQUESTED)
+                            != (operation.attempts == 0)) { throw new IOException("工具尝试计数损坏"); }
+                    tools += operation.attempts;
+                } else if (operation.status != TaskRecord.OperationState.REQUESTED) { tools++; }
             }
         }
         if (prompt != progress.promptTokens || completion != progress.completionTokens
@@ -297,6 +328,7 @@ public final class TaskStore {
         task.acceptanceVersion = WorkspaceSnapshot.hash(JSON.writeValueAsBytes(List.of(
                 UUID.randomUUID().toString(), command, task.acceptanceFiles)));
         task.checks = new ArrayList<>();
+        task.checkpoint.restartAgreement();
         task.state = TaskRecord.State.Paused;
         task.reason = "新验收约定已批准，旧验证已失效；等待初始验收证据";
         save(task);

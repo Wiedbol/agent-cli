@@ -110,6 +110,12 @@ public class LlmRole {
         return List.copyOf(history);
     }
 
+    /** 任务检查点是恢复依据，不依赖尽力追加的聊天日志。 */
+    public void restoreHistory(List<Message> messages) {
+        reset();
+        history.addAll(messages);
+    }
+
     /** 追加一条消息并立即记录（F①：每条消息立即落盘）。 */
     private void append(Message message) {
         history.add(message);

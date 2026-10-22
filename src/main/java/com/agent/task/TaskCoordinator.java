@@ -17,7 +17,7 @@ import java.nio.file.Path;
 import java.util.Set;
 import java.util.function.BiFunction;
 
-/** 真实失败驱动修复，验收判定独立于模型声明；恢复由后续票实现。 */
+/** 真实失败驱动修复，显式恢复可靠边界，验收判定独立于模型声明。 */
 public final class TaskCoordinator {
     private final Path root;
     private final CommandRunner runner;
@@ -59,64 +59,121 @@ public final class TaskCoordinator {
                         maxRequests, System.currentTimeMillis()));
             }
             task.progress.maxRequests = maxRequests;
-            TaskProgress progress = new TaskProgress(project, store, task, interactive);
-            out.println("任务: " + task.id);
-            try {
-                Path sessions = SessionPaths.defaultDir(project);
-                Files.createDirectories(sessions);
-                WorkspaceSnapshot.requireInside(project, sessions);
-                SessionStore session = SessionStore.startStrict(sessions, task.sessionId);
-                task.sessionId = session.sessionId();
-                store.save(task);
-                TaskAcceptance acceptance = new TaskAcceptance(project, store, runner);
-                task.state = TaskRecord.State.Verifying;
-                store.save(task);
-                TaskAcceptance.Evidence baseline = acceptance.check(task, "baseline", Set.of());
-                if (!baseline.codingAllowed()) {
-                    return pause(store, task, "初始验收证据不可用: " + baseline.reason(), progress);
-                }
-                progress.acceptanceChecked(baseline, false);
-                task.state = TaskRecord.State.Running;
-                store.save(task);
-                TaskProtection protection = new TaskProtection(project, task.acceptanceFiles, () -> task.files);
-                ControllerRole controller = controllerFactory.apply(session, protection);
-                String feedback = goal + "\n初始" + feedback(baseline);
-                while (true) {
-                    ControllerRole.RunResult result;
-                    try { result = controller.runTaskResult(feedback, progress); }
-                    catch (TaskProgress.Recheck repeated) { result = null; }
-                    if (result != null) {
-                        out.println("Agent > " + result.answer());
-                        if (result.reason() != ControllerRole.StopReason.COMPLETED || result.answer().isBlank()) {
-                            return pause(store, task, result.answer().isBlank() ? "模型没有给出完成声明" : result.answer(), progress);
+            return execute(store, task, interactive, false);
+        }
+    }
+
+    /** 恢复必须持有同一项目写锁；旧版本或未知副作用只暂停，不推断结果。 */
+    public TaskRecord resume(String id, boolean interactive) throws IOException, InterruptedException {
+        TaskStore store = new TaskStore(root);
+        try (TaskStore.Writer writer = store.lock()) {
+            TaskRecord task = store.read(id);
+            if (task.state == TaskRecord.State.Abandoned) { throw new IOException("已放弃任务不能恢复"); }
+            return execute(store, task, interactive, true);
+        }
+    }
+
+    private TaskRecord execute(TaskStore store, TaskRecord task, boolean interactive, boolean resumed)
+            throws IOException, InterruptedException {
+        Path project = root.toRealPath();
+        TaskProgress progress = new TaskProgress(project, store, task, interactive);
+        out.println("任务: " + task.id);
+        try {
+            if (resumed) { TaskCheckpoint.requireResumable(task); }
+            TaskProtection protection = new TaskProtection(project, task.acceptanceFiles, () -> task.files);
+            protection.check();
+            if (task.state == TaskRecord.State.Verified) { return task; }
+            Path sessions = SessionPaths.defaultDir(project);
+            Files.createDirectories(sessions);
+            WorkspaceSnapshot.requireInside(project, sessions);
+            SessionStore session = resumed ? SessionStore.resumeStrict(sessions, task.sessionId)
+                    : SessionStore.startStrict(sessions, task.sessionId);
+            task.sessionId = session.sessionId();
+            store.save(task);
+            ControllerRole controller = controllerFactory.apply(session, protection);
+            TaskAcceptance acceptance = new TaskAcceptance(project, store, runner);
+            while (true) {
+                protection.check();
+                switch (task.checkpoint.phase) {
+                    case BASELINE -> {
+                        task.state = TaskRecord.State.Verifying;
+                        store.save(task);
+                        TaskAcceptance.Evidence baseline = currentAcceptance(store, task, acceptance, "baseline", Set.of());
+                        if (!baseline.codingAllowed()) {
+                            return pause(store, task, "初始验收证据不可用: " + baseline.reason(), progress);
+                        }
+                        if (!task.checkpoint.acceptanceProcessed) {
+                            task.checkpoint.acceptanceProcessed = true;
+                            progress.acceptanceChecked(baseline, false);
+                        }
+                        task.checkpoint.phase = TaskRecord.Phase.CODING;
+                        task.checkpoint.feedback = (task.checkpoint.messages.isEmpty() ? task.goal : "验收已重新约定")
+                                + "\n初始" + feedback(baseline);
+                        progress.save();
+                    }
+                    case CODING -> {
+                        task.state = TaskRecord.State.Running;
+                        store.save(task);
+                        ControllerRole.RunResult result;
+                        try { result = controller.runTaskResult(task.checkpoint.feedback, progress); }
+                        catch (TaskProgress.Recheck repeated) { result = null; }
+                        if (result != null) {
+                            out.println("Agent > " + result.answer());
+                            if (result.reason() != ControllerRole.StopReason.COMPLETED || result.answer().isBlank()) {
+                                return pause(store, task, result.answer().isBlank() ? "模型没有给出完成声明" : result.answer(), progress);
+                            }
                         }
                     }
-                    protection.check();
-                    task.state = TaskRecord.State.Verifying;
-                    store.save(task);
-                    TaskAcceptance.Evidence verified = acceptance.check(task, "final", baseline.identities());
-                    if (!verified.codingAllowed()) { return pause(store, task, verified.reason(), progress); }
-                    progress.acceptanceChecked(verified, result != null);
-                    if (result != null && verified.verdict().equals("PASSED")) {
-                        task.state = TaskRecord.State.Verified;
-                        task.reason = "";
+                    case ACCEPTANCE -> {
+                        task.state = TaskRecord.State.Verifying;
+                        store.save(task);
+                        var baseline = store.readEvidence(task, task.checks.get(0));
+                        var verified = currentAcceptance(store, task, acceptance, "final", baseline.identities());
+                        if (!verified.codingAllowed()) { return pause(store, task, verified.reason(), progress); }
+                        if (!task.checkpoint.acceptanceProcessed) {
+                            task.checkpoint.acceptanceProcessed = true;
+                            progress.acceptanceChecked(verified, task.checkpoint.completionClaim);
+                        }
+                        if (task.checkpoint.completionClaim && verified.verdict().equals("PASSED")) {
+                            task.state = TaskRecord.State.Verified;
+                            task.reason = "";
+                            task.checkpoint.phase = TaskRecord.Phase.COMPLETE;
+                            progress.save();
+                            return task;
+                        }
+                        task.checkpoint.feedback = feedback(verified) + "\n请根据真实验收结果继续处理目标，完成后申请重新验收。";
+                        task.checkpoint.phase = TaskRecord.Phase.CODING;
+                        task.state = TaskRecord.State.Running;
                         progress.save();
-                        return task;
                     }
-                    feedback = feedback(verified) + "\n请根据真实验收结果继续处理目标，完成后申请重新验收。";
-                    task.state = TaskRecord.State.Running;
-                    progress.save();
+                    case COMPLETE -> { throw new IOException("任务完成阶段与状态不匹配"); }
                 }
-            } catch (TaskProgress.Pause stopped) {
-                return pause(store, task, stopped.getMessage(), progress);
-            } catch (TaskProtection.Violation violation) {
-                return pause(store, task, violation.getMessage(), progress);
-            } catch (IOException | UncheckedIOException | InterruptedException failed) {
-                try { pause(store, task, "执行或持久化失败: " + failed.getMessage(), progress); }
-                catch (IOException saveFailed) { failed.addSuppressed(saveFailed); }
-                throw failed;
             }
+        } catch (TaskProgress.Pause stopped) {
+            return pause(store, task, stopped.getMessage(), progress);
+        } catch (TaskProtection.Violation violation) {
+            return pause(store, task, violation.getMessage(), progress);
+        } catch (IOException | UncheckedIOException | InterruptedException failed) {
+            try { pause(store, task, "执行或持久化失败: " + failed.getMessage(), progress); }
+            catch (IOException saveFailed) { failed.addSuppressed(saveFailed); }
+            throw failed;
         }
+    }
+
+    private TaskAcceptance.Evidence currentAcceptance(TaskStore store, TaskRecord task, TaskAcceptance acceptance,
+                                                     String kind, Set<String> identities)
+            throws IOException, InterruptedException {
+        if (task.checkpoint.acceptancePending) { throw new TaskProgress.Pause("验收命令结果不明，需要人工处置"); }
+        if (task.checkpoint.acceptanceResult != null) {
+            var reference = task.checks.stream().filter(ref -> ref.id().equals(task.checkpoint.acceptanceResult))
+                    .findFirst().orElseThrow(() -> new IOException("检查点缺少验收结果关联"));
+            var evidence = store.readEvidence(task, reference);
+            if (!kind.equals(evidence.kind())) { throw new IOException("检查点验收阶段不匹配"); }
+            return evidence;
+        }
+        var evidence = acceptance.check(task, kind, identities);
+        out.println("[任务] " + kind + " 验收结果已记录: " + evidence.verdict());
+        return evidence;
     }
 
     /** 提高额度与恢复执行分开，非交互调用不会等待输入或重置历史消耗。 */
@@ -149,7 +206,7 @@ public final class TaskCoordinator {
 
     private TaskRecord pause(TaskStore store, TaskRecord task, String reason, TaskProgress progress) throws IOException {
         task.state = TaskRecord.State.Paused;
-        task.reason = reason + "；下一步：检查证据与预算，合法验收变更须明确重新约定；任务恢复由后续版本提供";
+        task.reason = reason + "；下一步：检查证据与预算后显式 --resume-task；未知副作用需人工处置，外部变化需重新规划";
         if (progress == null) { store.save(task); }
         else {
             try { progress.save(); }

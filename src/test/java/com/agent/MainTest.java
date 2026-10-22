@@ -20,6 +20,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MainTest {
 
+    @Test void shouldParseExplicitTaskResumeAndRejectConflictingModes() {
+        var options = Main.Options.parse(new String[]{"--resume-task", "task-id", "--yes"});
+        assertEquals("task-id", options.resumeTask());
+        assertTrue(options.autoApprove());
+        for (String[] invalid : new String[][] {
+                {"--resume-task"}, {"--resume-task", "--yes"},
+                {"--resume-task", "id", "--task", "goal"},
+                {"--resume-task", "id", "--resume", "chat"},
+                {"--resume-task", "id", "--local"},
+                {"--resume-task", "id", "--tasks"},
+                {"--resume-task", "id", "--accept-command", "mvn test"},
+                {"--resume-task", "id", "--max-steps", "30"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(invalid));
+        }
+    }
+
     private static final Charset GBK = Charset.forName("GBK");
 
     private static BufferedReader stdin(String rawText, Charset charset) {
