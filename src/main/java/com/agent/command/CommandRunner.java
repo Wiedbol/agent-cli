@@ -9,4 +9,11 @@ public interface CommandRunner {
 
     CommandResult run(Path workingDirectory, String command, long timeoutSeconds)
             throws IOException, InterruptedException;
+
+    /** 不支持进程观察的替身仍可执行，但人工处置不能假定其旧进程已停止。 */
+    default CommandRunner withProcessObserver(java.util.function.Consumer<ProcessHandle> observer) { return this; }
+
+    final class TrackingFailure extends java.io.UncheckedIOException {
+        public TrackingFailure(IOException cause) { super("任务进程记录失败", cause); }
+    }
 }

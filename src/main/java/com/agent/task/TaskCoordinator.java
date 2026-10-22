@@ -15,17 +15,20 @@ import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
-import java.util.function.BiFunction;
 
 /** 真实失败驱动修复，显式恢复可靠边界，验收判定独立于模型声明。 */
 public final class TaskCoordinator {
     private final Path root;
     private final CommandRunner runner;
-    private final BiFunction<SessionStore, TaskProtection, ControllerRole> controllerFactory;
+    @FunctionalInterface
+    public interface ControllerFactory {
+        ControllerRole create(SessionStore session, TaskProtection protection, CommandRunner runner);
+    }
+    private final ControllerFactory controllerFactory;
     private final PrintStream out;
 
     public TaskCoordinator(Path root, CommandRunner runner,
-                           BiFunction<SessionStore, TaskProtection, ControllerRole> controllerFactory, PrintStream out) {
+                           ControllerFactory controllerFactory, PrintStream out) {
         this.root = root;
         this.runner = runner;
         this.controllerFactory = controllerFactory;
@@ -90,8 +93,9 @@ public final class TaskCoordinator {
                     : SessionStore.startStrict(sessions, task.sessionId);
             task.sessionId = session.sessionId();
             store.save(task);
-            ControllerRole controller = controllerFactory.apply(session, protection);
-            TaskAcceptance acceptance = new TaskAcceptance(project, store, runner);
+            CommandRunner observedRunner = runner.withProcessObserver(new TaskProcesses(store, task));
+            ControllerRole controller = controllerFactory.create(session, protection, observedRunner);
+            TaskAcceptance acceptance = new TaskAcceptance(project, store, observedRunner);
             while (true) {
                 protection.check();
                 switch (task.checkpoint.phase) {
@@ -231,6 +235,9 @@ public final class TaskCoordinator {
             if (task.state != TaskRecord.State.Paused && task.state != TaskRecord.State.Verified) {
                 throw new IOException("只有暂停或验证通过的任务可重新约定验收");
             }
+            if (TaskCheckpoint.hasUncertainOperation(task)) {
+                return pause(store, task, "存在结果不明的操作，不能通过重新约定执行新验收；请先显式处置或放弃任务");
+            }
             var proposal = WorkspaceSnapshot.capture(project);
             out.println("重新约定任务: " + id + "\n原命令: " + task.command + "\n新命令: " + command
                     + "\n受保护输入变化: " + new TaskProtection(project, task.acceptanceFiles).changes(proposal)
@@ -243,7 +250,8 @@ public final class TaskCoordinator {
             }
             store.replaceAgreement(task, command, proposal);
             try {
-                TaskAcceptance.Evidence baseline = new TaskAcceptance(project, store, runner)
+                TaskAcceptance.Evidence baseline = new TaskAcceptance(project, store,
+                        runner.withProcessObserver(new TaskProcesses(store, task)))
                         .check(task, "baseline", Set.of());
                 task.state = TaskRecord.State.Paused;
                 task.reason = "新验收约定初始证据已保存: " + baseline.verdict()

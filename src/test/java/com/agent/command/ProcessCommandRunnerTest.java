@@ -17,6 +17,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** 通过真实本地进程验证公共契约，输出临时文件也限制在测试目录。 */
 class ProcessCommandRunnerTest {
 
+    @Test void shouldReportStartedProcessAndStopItWhenTrackingFails() throws Exception {
+        var observed = new java.util.concurrent.atomic.AtomicReference<ProcessHandle>();
+        CommandRunner runner = new ProcessCommandRunner(root).withProcessObserver(process -> {
+            observed.set(process);
+            throw new CommandRunner.TrackingFailure(new IOException("storage unavailable"));
+        });
+        String command = "echo tracked";
+        assertThrows(CommandRunner.TrackingFailure.class, () -> runner.run(root, command, 10));
+        org.junit.jupiter.api.Assertions.assertNotNull(observed.get());
+        assertFalse(observed.get().isAlive());
+        assertNoOutputLogs();
+    }
+
     private static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase().contains("win");
 
     @TempDir

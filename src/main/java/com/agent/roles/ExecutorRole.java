@@ -67,6 +67,8 @@ public class ExecutorRole {
         long start = System.nanoTime();
         try {
             return operation.run();
+        } catch (com.agent.command.CommandRunner.TrackingFailure trackingFailed) {
+            throw trackingFailed;
         } catch (Exception failed) {
             long elapsed = elapsedMillis(start);
             String message = describe(failed);

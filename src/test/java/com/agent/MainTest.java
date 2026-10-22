@@ -20,6 +20,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MainTest {
 
+    @Test void shouldParseHumanResolutionModesAndRejectMixedOptions() {
+        var retry = Main.Options.parse(new String[]{"--retry-operation", "task", "--operation", "op", "--yes"});
+        assertEquals("task", retry.retryTask());
+        assertEquals("op", retry.operation());
+        assertEquals("task", Main.Options.parse(new String[]{"--abandon-task", "task"}).abandonTask());
+        for (String[] invalid : new String[][] {
+                {"--retry-operation", "task"}, {"--operation", "op"}, {"--abandon-task"},
+                {"--retry-operation", "task", "--operation", "op", "--resume-task", "task"},
+                {"--abandon-task", "task", "--task", "goal"},
+                {"--abandon-task", "task", "--yes", "--resume", "chat"},
+                {"--abandon-task", "task", "--operation", "op"},
+                {"--retry-operation", "task", "--operation", "op", "--max-steps", "20"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(invalid));
+        }
+    }
+
     @Test void shouldParseExplicitTaskResumeAndRejectConflictingModes() {
         var options = Main.Options.parse(new String[]{"--resume-task", "task-id", "--yes"});
         assertEquals("task-id", options.resumeTask());

@@ -101,6 +101,7 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         if (response.hasToolCalls()) {
             for (ToolCall call : response.toolCalls()) {
                 TaskRecord.Operation operation = new TaskRecord.Operation();
+                operation.operationId = java.util.UUID.randomUUID().toString();
                 operation.callId = call.id();
                 operation.tool = call.name();
                 operation.arguments = call.arguments();

@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 public final class ProcessCommandRunner implements CommandRunner {
 
     private final Path outputDirectory;
+    private final java.util.function.Consumer<ProcessHandle> observer;
 
     public ProcessCommandRunner() {
         this(null);
@@ -25,7 +26,16 @@ public final class ProcessCommandRunner implements CommandRunner {
 
     /** 测试可指定输出目录，避免临时日志写出其隔离目录；null 使用系统临时目录。 */
     public ProcessCommandRunner(Path outputDirectory) {
+        this(outputDirectory, null);
+    }
+
+    private ProcessCommandRunner(Path outputDirectory, java.util.function.Consumer<ProcessHandle> observer) {
         this.outputDirectory = outputDirectory == null ? null : outputDirectory.toAbsolutePath().normalize();
+        this.observer = observer;
+    }
+
+    @Override public CommandRunner withProcessObserver(java.util.function.Consumer<ProcessHandle> value) {
+        return new ProcessCommandRunner(outputDirectory, value);
     }
 
     @Override
@@ -46,7 +56,7 @@ public final class ProcessCommandRunner implements CommandRunner {
             builder.redirectOutput(outputFile.toFile());
             process = builder.start();
 
-            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            if (!waitFor(process, timeoutSeconds)) {
                 killProcessTree(process);
                 return new CommandResult(null, true, "", elapsedMillis(startedAt),
                         CommandResult.OutputCompleteness.INCOMPLETE);
@@ -68,6 +78,17 @@ public final class ProcessCommandRunner implements CommandRunner {
             } catch (IOException stillLocked) {
                 // Windows 子进程可能尚未释放句柄，删除日志失败不能掩盖进程的真实结果。
             }
+        }
+    }
+
+    private boolean waitFor(Process process, long timeoutSeconds) throws InterruptedException {
+        if (observer == null) { return process.waitFor(timeoutSeconds, TimeUnit.SECONDS); }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (true) {
+            observer.accept(process.toHandle());
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) { return false; }
+            if (process.waitFor(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(100)), TimeUnit.NANOSECONDS)) { return true; }
         }
     }
 

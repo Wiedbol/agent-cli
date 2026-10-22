@@ -221,9 +221,9 @@ public class CodingAgentCli {
     public int startManagedTask(String goal, String acceptanceCommand, boolean interactive) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
-            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection) ->
+            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
-                            managedSession, commandRunner, protection).controller, out)
+                            managedSession, managedRunner, protection).controller, out)
                     .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
@@ -242,6 +242,24 @@ public class CodingAgentCli {
         } catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
     }
 
+    public int abandonTask(String id, boolean interactive) {
+        try {
+            printTask(new com.agent.task.TaskResolution(root, in, out).abandon(id, interactive));
+            return 1;
+        } catch (IOException | java.io.UncheckedIOException failure) {
+            err.println("放弃任务失败: " + failure.getMessage()); return 4;
+        }
+    }
+
+    public int retryUncertainOperation(String id, String operationId, boolean interactive) {
+        try {
+            printTask(new com.agent.task.TaskResolution(root, in, out).retry(id, operationId, interactive));
+            return 1;
+        } catch (IOException | java.io.UncheckedIOException failure) {
+            err.println("处置结果不明操作失败: " + failure.getMessage()); return 4;
+        }
+    }
+
     public int resumeManagedTask(String id) {
         return resumeManagedTask(id, ConsoleStreams.hasInteractiveConsole());
     }
@@ -250,9 +268,9 @@ public class CodingAgentCli {
     public int resumeManagedTask(String id, boolean interactive) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
-            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection) ->
+            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
-                            managedSession, commandRunner, protection).controller, out).resume(id, interactive);
+                            managedSession, managedRunner, protection).controller, out).resume(id, interactive);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); err.println("任务恢复被中断"); return 4;
@@ -308,8 +326,21 @@ public class CodingAgentCli {
                     + decision.acceptanceVersion + "，失败来源=" + decision.failureSource);
             for (var operation : decision.operations) {
                 out.println("工具 " + operation.callId + ": " + operation.tool + " " + operation.status
-                        + "，修改=" + operation.changes.keySet());
+                        + "，修改=" + operation.changes.keySet()
+                        + "，操作ID: " + operation.reference(decision.number)
+                        + "，已记录进程=" + operation.processes
+                        + (operation.status == TaskRecord.OperationState.RUNNING && !"READ".equals(operation.risk) ? "，结果不明" : ""));
             }
+        }
+        for (var resolution : task.resolutions) {
+            out.println("人工处置: " + resolution.action + "，目标=" + resolution.target + "，新操作="
+                    + resolution.replacementId + "，时间=" + resolution.at
+                    + "，旧进程停止确认=" + resolution.stoppedConfirmed
+                    + (resolution.originalOperation == null ? "" : "，原操作结果不明"));
+        }
+        if (task.checkpoint.acceptancePending) {
+            out.println("验收结果不明，操作ID: " + com.agent.task.TaskResolution.acceptanceReference(task)
+                    + "，已记录进程=" + task.checkpoint.acceptanceProcesses);
         }
         for (var change : progress.budgetChanges) {
             out.println("预算调整: " + change.previous() + " -> " + change.current() + "，时间=" + change.at());

@@ -10,6 +10,7 @@ public final class TaskRecord {
     public enum State { Created, Running, Verifying, Paused, Verified, Abandoned }
     public enum DecisionState { RESERVED, RESPONDED, MODEL_FAILED }
     public enum OperationState { REQUESTED, RUNNING, SUCCEEDED, FAILED, BLOCKED }
+    public enum ResolutionAction { RETRY, ABANDON }
 
     public int schemaVersion = 1;
     public String id;
@@ -26,6 +27,21 @@ public final class TaskRecord {
     public List<Agreement> agreementHistory = new ArrayList<>();
     public Progress progress = new Progress();
     public Checkpoint checkpoint = new Checkpoint();
+    public List<Resolution> resolutions = new ArrayList<>();
+
+    /** 人工选择保留原未知操作，不能把确认解释为执行成功。 */
+    public static final class Resolution {
+        public String id;
+        public ResolutionAction action;
+        public String target;
+        public String replacementId;
+        public long at;
+        public boolean stoppedConfirmed;
+        public Operation originalOperation;
+        public Map<String, String> expectedFiles = new LinkedHashMap<>();
+        public Map<String, String> reviewedFiles = new LinkedHashMap<>();
+        public List<ProcessRef> originalProcesses = new ArrayList<>();
+    }
 
     public enum Phase { BASELINE, CODING, ACCEPTANCE, COMPLETE }
 
@@ -38,16 +54,21 @@ public final class TaskRecord {
         public boolean acceptancePending;
         public String acceptanceResult;
         public boolean acceptanceProcessed;
+        public String acceptanceOperationId;
+        public List<ProcessRef> acceptanceProcesses = new ArrayList<>();
 
         /** 统一清除上一轮验收关联，避免恢复误用旧证据。 */
         public void beginAcceptance(boolean claim) {
             phase = Phase.ACCEPTANCE;
+            acceptanceOperationId = null;
+            acceptanceProcesses.clear();
             completionClaim = claim;
             reserveAcceptance();
             acceptancePending = false;
         }
 
         public void reserveAcceptance() {
+            if (acceptanceOperationId == null) { acceptanceOperationId = java.util.UUID.randomUUID().toString(); }
             acceptancePending = true;
             acceptanceResult = null;
             acceptanceProcessed = false;
@@ -93,6 +114,7 @@ public final class TaskRecord {
     }
 
     public static final class Operation {
+        public String operationId;
         public String callId;
         public String tool;
         public String arguments;
@@ -101,6 +123,21 @@ public final class TaskRecord {
         public Map<String, Change> changes = new LinkedHashMap<>();
         public String risk;
         public int attempts;
+        public List<ProcessRef> processes = new ArrayList<>();
+
+        public String reference(int decisionNumber) {
+            return operationId == null ? decisionNumber + ":" + callId : operationId;
+        }
+    }
+
+    public record ProcessRef(long pid, long startedAt) {
+        public static ProcessRef of(ProcessHandle process) {
+            return new ProcessRef(process.pid(), process.info().startInstant().map(java.time.Instant::toEpochMilli).orElse(0L));
+        }
+        public boolean alive() {
+            return ProcessHandle.of(pid).filter(ProcessHandle::isAlive).filter(process -> startedAt == 0
+                    || process.info().startInstant().map(java.time.Instant::toEpochMilli).orElse(startedAt) == startedAt).isPresent();
+        }
     }
 
     public record Change(String before, String after) { }

@@ -17,7 +17,7 @@ final class TaskCheckpoint {
             if (!node.hasNonNull(field)) { throw new IOException("任务检查点不完整: " + field); }
         }
         if (!node.has("feedback") || !node.has("acceptanceResult") || task.checkpoint == null
-                || task.checkpoint.phase == null || task.checkpoint.messages == null) {
+                || task.checkpoint.phase == null || task.checkpoint.messages == null || task.checkpoint.acceptanceProcesses == null) {
             throw new IOException("任务检查点阶段损坏");
         }
         var pending = new LinkedHashMap<String, com.agent.llm.ToolCall>();
@@ -43,11 +43,13 @@ final class TaskCheckpoint {
         }
         for (var decision : task.progress.decisions) {
             for (var op : decision.operations) {
-                if (op.callId == null || op.tool == null || op.arguments == null || op.observation == null) {
+                if (op.callId == null || op.tool == null || op.arguments == null || op.observation == null || op.processes == null) {
                     throw new IOException("任务操作不完整");
                 }
+                validateProcesses(op.processes);
             }
         }
+        validateProcesses(task.checkpoint.acceptanceProcesses);
         if (!pending.isEmpty()) {
             if (task.progress.decisions.isEmpty()) { throw new IOException("任务缺少待执行决策"); }
             var last = task.progress.decisions.get(task.progress.decisions.size() - 1);
@@ -56,6 +58,12 @@ final class TaskCheckpoint {
             if (last.roundFinished || !unfinished.equals(List.copyOf(pending.keySet()))) {
                 throw new IOException("任务工具游标与消息不一致");
             }
+        }
+    }
+
+    private static void validateProcesses(List<TaskRecord.ProcessRef> processes) throws IOException {
+        if (processes.stream().anyMatch(process -> process == null || process.pid() <= 0 || process.startedAt() < 0)) {
+            throw new IOException("任务进程身份记录损坏");
         }
     }
 
@@ -89,5 +97,11 @@ final class TaskCheckpoint {
                 && task.checkpoint.acceptanceProcessed) {
             throw new TaskProgress.Pause("同一核心错误持续三个决策轮次，不能通过恢复重置");
         }
+    }
+
+    static boolean hasUncertainOperation(TaskRecord task) {
+        return task.checkpoint.acceptancePending || task.progress.decisions.stream()
+                .flatMap(decision -> decision.operations.stream()).anyMatch(operation ->
+                        operation.status == TaskRecord.OperationState.RUNNING && !"READ".equals(operation.risk));
     }
 }

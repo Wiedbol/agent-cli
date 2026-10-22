@@ -77,7 +77,7 @@ public final class TaskStore {
 
     public TaskRecord create(String goal, String command) throws IOException {
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 4;
+        task.schemaVersion = 5;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
@@ -128,6 +128,17 @@ public final class TaskStore {
             }
         }
         redactText(persisted.path("checkpoint"));
+        for (var resolution : persisted.path("resolutions")) {
+            var original = resolution.path("originalOperation");
+            if (original.isObject()) {
+                String arguments = original.path("arguments").asText(null);
+                ((com.fasterxml.jackson.databind.node.ObjectNode) original)
+                        .put("arguments", Redactor.redact(arguments, arguments).text());
+                ((com.fasterxml.jackson.databind.node.ObjectNode) original).put("observation",
+                        Redactor.redact(original.path("observation").asText(), arguments).text());
+            }
+        }
+        redactText(persisted.path("resolutions"));
         // 摘要覆盖脱敏后落盘的全部状态；不使用 previous 快照猜测执行是否成功。
         if (task.schemaVersion >= 4) {
             ((com.fasterxml.jackson.databind.node.ObjectNode) persisted).put("checkpointSha256",
@@ -178,7 +189,7 @@ public final class TaskStore {
             }
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 4) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 5) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
@@ -194,9 +205,10 @@ public final class TaskStore {
                     "acceptanceErrors", "toolErrors", "errorDescriptions")) {
                 if (!node.path("progress").hasNonNull(field)) { throw new IOException("任务消耗记录损坏: " + field); }
             }
-            validateProgress(task.progress, task.schemaVersion >= 4);
+            validateProgress(task, task.schemaVersion >= 4);
         }
         if (task.schemaVersion >= 4) { TaskCheckpoint.validate(task, node.path("checkpoint")); }
+        if (task.schemaVersion >= 5 && !node.hasNonNull("resolutions")) { throw new IOException("任务缺少人工处置记录"); }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
         for (TaskRecord.Agreement agreement : task.agreementHistory) {
             if (agreement == null || agreement.version() == null || agreement.command() == null
@@ -214,7 +226,8 @@ public final class TaskStore {
         return task;
     }
 
-    private void validateProgress(TaskRecord.Progress progress, boolean checkpointed) throws IOException {
+    private void validateProgress(TaskRecord task, boolean checkpointed) throws IOException {
+        TaskRecord.Progress progress = task.progress;
         if (progress.maxRequests <= 0 || progress.requests < 0 || progress.requests > progress.maxRequests
                 || progress.tools < 0 || progress.promptTokens < 0 || progress.completionTokens < 0
                 || progress.unknownRequests < 0 || progress.elapsedMillis < 0 || progress.decisions == null
@@ -245,6 +258,16 @@ public final class TaskStore {
                     tools += operation.attempts;
                 } else if (operation.status != TaskRecord.OperationState.REQUESTED) { tools++; }
             }
+        }
+        if (task.resolutions == null) { throw new IOException("人工处置记录损坏"); }
+        for (var resolution : task.resolutions) {
+            if (resolution == null || resolution.id == null || resolution.action == null || resolution.target == null
+                    || resolution.at <= 0 || resolution.reviewedFiles == null || resolution.expectedFiles == null
+                    || resolution.originalProcesses == null
+                    || resolution.action == TaskRecord.ResolutionAction.RETRY && (resolution.originalOperation == null || resolution.replacementId == null)) {
+                throw new IOException("人工处置记录损坏");
+            }
+            if (resolution.originalOperation != null) { tools += resolution.originalOperation.attempts; }
         }
         if (prompt != progress.promptTokens || completion != progress.completionTokens
                 || unknown != progress.unknownRequests || tools != progress.tools
