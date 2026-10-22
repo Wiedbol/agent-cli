@@ -34,14 +34,16 @@ public class LlmRole {
 
             你可以使用这些工具：
             - list_files：查看目录结构；
-            - read_file：读取文件内容；
+            - read_file：读取文件内容及原始字节的 SHA-256 版本；
             - search_code：按关键字搜索代码；
             - write_file：创建或修改文件；
+            - replace_text：按唯一预期原文和文件版本精确替换，写前显示 Diff；
             - run_command：在项目根目录执行命令（如 mvn、git）。
 
             工作方式要求：
             1. 需要了解现状时先调用只读工具（list_files / read_file / search_code），不要凭记忆猜测文件内容；
-            2. 修改文件用 write_file，并保证内容是完整可用的（不是片段或伪代码）；
+            2. 局部修改优先用 replace_text：先 read_file，原样提供 old_text 和读到的 expected_version；
+               new_text 可为空串表示删除。创建或整文件写入用 write_file，内容必须完整可用；
             3. 验证改动时用 run_command 执行构建或测试命令；
             4. 每一步都基于工具返回的真实结果推进，工具报错时先读错误原因再决定下一步；
             5. 任务完成后，用简洁的中文总结「做了什么、改了哪些文件、验证结果如何」。

@@ -10,6 +10,7 @@ import com.agent.tool.RunCommandTool;
 import com.agent.tool.SearchCodeTool;
 import com.agent.tool.Tool;
 import com.agent.tool.WriteFileTool;
+import com.agent.tool.ReplaceTextTool;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -43,9 +44,15 @@ public class RegistrarRole {
 
     /** 让装配点选择进程实现，注册员只负责把同一入口交给命令工具。 */
     public static RegistrarRole standard(Path root, CommandRunner commandRunner) {
+        return standard(root, commandRunner, (path, version) -> { });
+    }
+
+    public static RegistrarRole standard(Path root, CommandRunner commandRunner,
+                                         java.util.function.BiConsumer<Path, String> checkVersion) {
         return new RegistrarRole()
                 .register(new ReadFileTool())
                 .register(new WriteFileTool())
+                .register(new ReplaceTextTool(checkVersion))
                 .register(listFilesTool(root))
                 .register(searchCodeTool(root))
                 .register(new RunCommandTool(commandRunner));

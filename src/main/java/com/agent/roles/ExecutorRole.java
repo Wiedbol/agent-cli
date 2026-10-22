@@ -52,10 +52,21 @@ public class ExecutorRole {
 
     /** 执行一次工具调用，永不抛异常。 */
     public ToolResult execute(Tool tool, JsonNode arguments) {
+        return truncate(attempt(tool, () -> tool.execute(new ToolRequest(root, arguments))));
+    }
+
+    /** Diff 不使用模型结果长度限制，避免用户批准没有完整看到的变更。 */
+    public ToolResult preview(Tool tool, JsonNode arguments) {
+        return attempt(tool, () -> ToolResult.ok(tool.name(), tool.preview(new ToolRequest(root, arguments)), 0));
+    }
+
+    @FunctionalInterface
+    private interface Operation { ToolResult run() throws Exception; }
+
+    private ToolResult attempt(Tool tool, Operation operation) {
         long start = System.nanoTime();
         try {
-            ToolResult result = tool.execute(new ToolRequest(root, arguments));
-            return truncate(result);
+            return operation.run();
         } catch (Exception failed) {
             long elapsed = elapsedMillis(start);
             String message = describe(failed);

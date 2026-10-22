@@ -118,7 +118,8 @@ public class CodingAgentCli {
             this.controller = null;
             return;
         }
-        this.registrar = RegistrarRole.standard(this.root, commandRunner);
+        this.registrar = protection == null ? RegistrarRole.standard(this.root, commandRunner)
+                : RegistrarRole.standard(this.root, commandRunner, protection::checkFileVersion);
         GuardRole guard = protection == null ? new GuardRole(this.root)
                 : new GuardRole(this.root, protection::isWriteProtected);
         ExecutorRole executor = new ExecutorRole(this.root, ExecutorRole.DEFAULT_MAX_RESULT_CHARS, out);

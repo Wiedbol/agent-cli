@@ -13,9 +13,8 @@ import java.util.List;
 /**
  * Tool：读取指定文本文件的内容。
  *
- * <p>编码固定为 UTF-8；文件中的非法 UTF-8 字节序列会抛出 {@code MalformedInputException}
- * （{@link IOException} 的子类），而不是被静默替换成问号，以便调用方明确区分
- * 「读取文本」与「误读二进制」。
+ * <p>公开读取方法保持 UTF-8；工具调用可识别 BOM 或显式编码，并返回原始字节版本。
+ * 非法字节序列抛出 {@link IOException}，不能被静默替换成问号，否则后续编辑会污染原文。
  */
 public class ReadFileTool implements Tool {
 
@@ -26,13 +25,14 @@ public class ReadFileTool implements Tool {
 
     @Override
     public String description() {
-        return "读取项目内一个 UTF-8 文本文件的完整内容";
+        return "读取项目内文本及原始字节 SHA-256；识别 UTF-8/UTF-16 BOM，无 BOM 默认 UTF-8，可显式指定 encoding";
     }
 
     @Override
     public JsonNode parameters() {
         return ToolSchemas.object(
-                ToolSchemas.Param.required("path", "string", "文件路径（相对项目根目录）"));
+                ToolSchemas.Param.required("path", "string", "文件路径（相对项目根目录）"),
+                ToolSchemas.Param.optional("encoding", "string", "可选 UTF-8、UTF-16LE、UTF-16BE 或 GBK，不猜测旧编码"));
     }
 
     @Override
@@ -48,8 +48,12 @@ public class ReadFileTool implements Tool {
     @Override
     public ToolResult execute(ToolRequest request) throws IOException {
         long start = System.nanoTime();
-        String content = readFile(request.resolvePath("path"));
-        return ToolResult.ok(name(), "文件内容:\n" + content,
+        Path file = request.resolvePath("path");
+        requireRegularFile(file);
+        byte[] bytes = Files.readAllBytes(file);
+        String content = EncodedText.decode(bytes,
+                request.arg("encoding").isMissingNode() ? null : request.requireString("encoding")).text();
+        return ToolResult.ok(name(), "文件版本 SHA-256: " + FileVersion.hash(bytes) + "\n文件内容:\n" + content,
                 (System.nanoTime() - start) / 1_000_000);
     }
 

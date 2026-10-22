@@ -38,7 +38,7 @@ public class ControllerRole {
         default void beforeRequest() { }
         default void responded(LLMResponse response, long millis) { }
         default void modelFailed(IOException failure, long millis) { }
-        default void beforeTool(ToolCall call) { }
+        default void beforeTool(ToolCall call, Tool.Risk risk) { }
         default void approvalRequired() { }
         default void toolFinished(ToolCall call, boolean success, String observation) { }
         default void roundFinished() { }
@@ -129,7 +129,7 @@ public class ControllerRole {
             llm.recordToolCalls(response);
             for (ToolCall call : response.toolCalls()) {
                 checkInputs.run();
-                observer.beforeTool(call);
+                observer.beforeTool(call, registrar.find(call.name()).map(Tool::risk).orElse(Tool.Risk.READ));
                 DispatchResult result = dispatch(call, observer);
                 observer.toolFinished(call, result.success(), result.observation());
                 llm.recordToolResult(call, result.observation());
@@ -165,6 +165,9 @@ public class ControllerRole {
         if (!decision.allowed()) {
             return new DispatchResult(false, "守卫拒绝了这次工具调用 —— " + decision.reason());
         }
+        ToolResult preview = executor.preview(tool, arguments);
+        if (!preview.success()) { return new DispatchResult(false, preview.toObservation()); }
+        if (preview.output() != null && !preview.output().isEmpty()) { trace(preview.output()); }
         if (decision.needsConfirmation() && !user.autoApprove()) { observer.approvalRequired(); }
         if (decision.needsConfirmation() && !user.confirm(decision.reason() + "，是否允许？")) {
             return new DispatchResult(false, "用户拒绝了这次工具调用 —— " + decision.reason());

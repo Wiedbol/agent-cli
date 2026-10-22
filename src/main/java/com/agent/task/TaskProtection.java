@@ -12,10 +12,28 @@ import java.util.TreeSet;
 public final class TaskProtection {
     private final Path root;
     private final Map<String, String> frozen;
+    private final java.util.function.Supplier<Map<String, String>> expectedFiles;
 
     public TaskProtection(Path root, Map<String, String> frozen) {
+        this(root, frozen, null);
+    }
+
+    public TaskProtection(Path root, Map<String, String> frozen,
+                          java.util.function.Supplier<Map<String, String>> expectedFiles) {
         this.root = root.toAbsolutePath().normalize();
         this.frozen = Map.copyOf(frozen);
+        this.expectedFiles = expectedFiles;
+    }
+
+    /** 模型不能自行用新哈希承认未经任务记录的文件变化。 */
+    public void checkFileVersion(Path file, String version) {
+        if (expectedFiles == null) { return; }
+        try {
+            String relative = root.relativize(file.toRealPath()).toString().replace('\\', '/');
+            if (!version.equals(expectedFiles.get().get(relative))) {
+                throw new IllegalArgumentException("文件版本不符合任务记录: " + relative);
+            }
+        } catch (IOException failed) { throw new IllegalArgumentException("任务记录版本无法校验", failed); }
     }
 
     public static Map<String, String> freeze(Map<String, String> files) {
@@ -66,8 +84,16 @@ public final class TaskProtection {
     /** 校验异常必须越过工具 Observation 转换，让协调器停止后续副作用。 */
     public void check() {
         try {
-            List<String> changes = changes(WorkspaceSnapshot.capture(root));
+            Map<String, String> current = WorkspaceSnapshot.capture(root);
+            List<String> changes = changes(current);
             if (!changes.isEmpty()) { throw new Violation("任务验收输入已改变: " + String.join(", ", changes)); }
+            if (expectedFiles != null) {
+                Map<String, String> expected = expectedFiles.get();
+                var paths = new TreeSet<>(expected.keySet());
+                paths.addAll(current.keySet());
+                var changed = paths.stream().filter(path -> !java.util.Objects.equals(expected.get(path), current.get(path))).toList();
+                if (!changed.isEmpty()) { throw new Violation("文件版本不符合任务记录: " + String.join(", ", changed)); }
+            }
         } catch (IOException failed) { throw new Violation("任务验收输入无法校验: " + failed.getMessage()); }
     }
 

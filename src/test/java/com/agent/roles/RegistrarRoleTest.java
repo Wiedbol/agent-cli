@@ -22,7 +22,7 @@ class RegistrarRoleTest {
     void shouldRegisterStandardCodingToolset() {
         RegistrarRole registrar = RegistrarRole.standard(root);
 
-        assertEquals(List.of("read_file", "write_file", "list_files", "search_code", "run_command"),
+        assertEquals(List.of("read_file", "write_file", "replace_text", "list_files", "search_code", "run_command"),
                 registrar.tools().stream().map(Tool::name).toList());
     }
 
@@ -32,7 +32,7 @@ class RegistrarRoleTest {
 
         List<LLMClient.ToolDef> definitions = registrar.toolDefinitions();
 
-        assertEquals(5, definitions.size());
+        assertEquals(6, definitions.size());
         for (LLMClient.ToolDef definition : definitions) {
             assertTrue(definition.description() != null && !definition.description().isBlank(),
                     definition.name() + " 必须有描述，否则模型不知道何时调用它");
@@ -64,6 +64,8 @@ class RegistrarRoleTest {
         RegistrarRole registrar = RegistrarRole.standard(root);
 
         assertEquals(List.of("path"), registrar.find("write_file").orElseThrow().pathArguments());
+        assertEquals(List.of("path"), registrar.find("replace_text").orElseThrow().pathArguments());
+        assertEquals(Tool.Risk.WRITE, registrar.find("replace_text").orElseThrow().risk());
         assertEquals(List.of("path"), registrar.find("read_file").orElseThrow().pathArguments());
         assertTrue(registrar.find("run_command").orElseThrow().pathArguments().isEmpty());
     }

@@ -60,4 +60,7 @@ public interface Tool {
      * <p>允许抛异常：执行员会捕获并转换成失败结果，绝不会让异常穿透到控制员之外。
      */
     ToolResult execute(ToolRequest request) throws Exception;
+
+    /** 只读预览必须先于人工确认；普通工具没有可审阅的文本修改。 */
+    default String preview(ToolRequest request) throws Exception { return ""; }
 }

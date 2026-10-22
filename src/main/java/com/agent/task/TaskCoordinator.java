@@ -78,8 +78,8 @@ public final class TaskCoordinator {
                 progress.acceptanceChecked(baseline, false);
                 task.state = TaskRecord.State.Running;
                 store.save(task);
-                ControllerRole controller = controllerFactory.apply(session,
-                        new TaskProtection(project, task.acceptanceFiles));
+                TaskProtection protection = new TaskProtection(project, task.acceptanceFiles, () -> task.files);
+                ControllerRole controller = controllerFactory.apply(session, protection);
                 String feedback = goal + "\n初始" + feedback(baseline);
                 while (true) {
                     ControllerRole.RunResult result;
@@ -91,6 +91,7 @@ public final class TaskCoordinator {
                             return pause(store, task, result.answer().isBlank() ? "模型没有给出完成声明" : result.answer(), progress);
                         }
                     }
+                    protection.check();
                     task.state = TaskRecord.State.Verifying;
                     store.save(task);
                     TaskAcceptance.Evidence verified = acceptance.check(task, "final", baseline.identities());

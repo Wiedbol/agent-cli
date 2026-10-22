@@ -5,6 +5,7 @@ import com.agent.llm.ToolCall;
 import com.agent.roles.ControllerRole;
 import com.agent.task.TaskRecord.DecisionState;
 import com.agent.task.TaskRecord.OperationState;
+import com.agent.tool.Tool;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -27,6 +28,7 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
     private TaskRecord.Decision decision;
     private int operationIndex;
     private Map<String, String> before;
+    private Tool.Risk currentRisk;
 
     public TaskProgress(Path root, TaskStore store, TaskRecord task, boolean interactive) {
         this.root = root;
@@ -87,7 +89,8 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         save();
     }
 
-    @Override public void beforeTool(ToolCall call) {
+    @Override public void beforeTool(ToolCall call, Tool.Risk risk) {
+        currentRisk = risk;
         try { before = WorkspaceSnapshot.capture(root); }
         catch (IOException failure) { throw new UncheckedIOException(failure); }
         decision.operations.get(operationIndex).status = OperationState.RUNNING;
@@ -119,12 +122,19 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
             Map<String, String> after = WorkspaceSnapshot.capture(root);
             var paths = new TreeSet<>(before.keySet());
             paths.addAll(after.keySet());
+            var expected = new java.util.LinkedHashMap<>(task.files);
             for (String path : paths) {
                 if (!java.util.Objects.equals(before.get(path), after.get(path))) {
                     operation.changes.put(path, new TaskRecord.Change(before.get(path), after.get(path)));
+                    // 只认可成功写操作在已知版本上产生的变化，读取与失败不能承认外部修改。
+                    if (success && currentRisk != Tool.Risk.READ
+                            && java.util.Objects.equals(task.files.get(path), before.get(path))) {
+                        if (after.containsKey(path)) { expected.put(path, after.get(path)); }
+                        else { expected.remove(path); }
+                    }
                 }
             }
-            task.files = after;
+            task.files = expected;
         } catch (IOException failure) { throw new UncheckedIOException(failure); }
         save();
     }
