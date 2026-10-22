@@ -1,5 +1,7 @@
 package com.agent;
 
+import com.agent.command.CommandRunner;
+import com.agent.command.ProcessCommandRunner;
 import com.agent.llm.LLMClient;
 import com.agent.llm.Message;
 import com.agent.roles.ControllerRole;
@@ -73,13 +75,26 @@ public class CodingAgentCli {
                           PrintStream out,
                           PrintStream err,
                           SessionStore session) {
+        this(root, client, autoApprove, maxSteps, in, out, err, session, new ProcessCommandRunner());
+    }
+
+    /** 注入外部命令执行入口，使离线测试不启动真实进程。 */
+    public CodingAgentCli(Path root,
+                          LLMClient client,
+                          boolean autoApprove,
+                          int maxSteps,
+                          BufferedReader in,
+                          PrintStream out,
+                          PrintStream err,
+                          SessionStore session,
+                          CommandRunner commandRunner) {
         this.root = root.toAbsolutePath().normalize();
         this.out = out;
         this.err = err;
         this.session = session;
         this.user = new UserRole(in, out, autoApprove);
         this.llm = new LlmRole(client, restoredHistory(session), recorder(session));
-        this.registrar = RegistrarRole.standard(this.root);
+        this.registrar = RegistrarRole.standard(this.root, commandRunner);
         GuardRole guard = new GuardRole(this.root);
         ExecutorRole executor = new ExecutorRole(this.root, ExecutorRole.DEFAULT_MAX_RESULT_CHARS, out);
         this.controller = new ControllerRole(llm, registrar, guard, executor, user, maxSteps, out,

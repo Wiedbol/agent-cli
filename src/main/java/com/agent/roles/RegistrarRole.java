@@ -1,5 +1,7 @@
 package com.agent.roles;
 
+import com.agent.command.CommandRunner;
+import com.agent.command.ProcessCommandRunner;
 import com.agent.llm.LLMClient;
 import com.agent.tool.IgnoreRules;
 import com.agent.tool.ListFilesTool;
@@ -36,12 +38,17 @@ public class RegistrarRole {
 
     /** 注册标准工具集：读文件、写文件、列目录、搜代码、执行命令。 */
     public static RegistrarRole standard(Path root) {
+        return standard(root, new ProcessCommandRunner());
+    }
+
+    /** 让装配点选择进程实现，注册员只负责把同一入口交给命令工具。 */
+    public static RegistrarRole standard(Path root, CommandRunner commandRunner) {
         return new RegistrarRole()
                 .register(new ReadFileTool())
                 .register(new WriteFileTool())
                 .register(listFilesTool(root))
                 .register(searchCodeTool(root))
-                .register(new RunCommandTool());
+                .register(new RunCommandTool(commandRunner));
     }
 
     private static ListFilesTool listFilesTool(Path root) {

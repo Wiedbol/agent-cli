@@ -1,13 +1,12 @@
 package com.agent.tool;
 
+import com.agent.command.ProcessCommandRunner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,10 +20,9 @@ class RunCommandToolTest {
     @TempDir
     Path root;
 
-    private final RunCommandTool tool = new RunCommandTool();
-
     private ToolResult run(String json) throws Exception {
-        return tool.execute(new ToolRequest(root, MAPPER.readTree(json)));
+        return new RunCommandTool(new ProcessCommandRunner(root))
+                .execute(new ToolRequest(root, MAPPER.readTree(json)));
     }
 
     @Test
@@ -90,16 +88,11 @@ class RunCommandToolTest {
     }
 
     @Test
-    void shouldChooseShellPerPlatform() {
-        List<String> shell = RunCommandTool.shellCommand("echo hi");
+    void shouldInterpretShellOperators() throws Exception {
+        ToolResult result = run("{\"command\":\"echo first-marker && echo second-marker\"}");
 
-        if (WINDOWS) {
-            assertEquals(List.of("cmd.exe", "/d", "/c", "echo hi"), shell);
-            assertTrue(shell.get(0).toLowerCase().contains("cmd"));
-        } else {
-            assertEquals(List.of("/bin/sh", "-c", "echo hi"), shell);
-            assertTrue(shell.get(0).contains("sh"));
-        }
-        assertEquals("echo hi", shell.get(shell.size() - 1), "最后一段必须是原始命令");
+        assertTrue(result.success());
+        assertTrue(result.output().contains("first-marker"));
+        assertTrue(result.output().contains("second-marker"));
     }
 }

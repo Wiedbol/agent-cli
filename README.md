@@ -40,6 +40,10 @@ agent-cli/
     │   │   ├── SessionPaths.java       #   目录与命名规则
     │   │   ├── SessionExporter.java    #   导出为可读 markdown
     │   │   └── Redactor.java           #   落盘前的敏感内容过滤
+    │   ├── command/                  # 共享命令执行契约与真实进程实现
+    │   │   ├── CommandRunner.java
+    │   │   ├── CommandResult.java
+    │   │   └── ProcessCommandRunner.java
     │   ├── llm/
     │   │   ├── LLMClient.java          # 模型客户端接口（依赖倒置的边界）
     │   │   ├── DeepSeekClient.java     # Chat Completions 实现
@@ -101,6 +105,7 @@ agent-cli/
 | `ControllerRole` | 控制员：ReAct 循环、工具调用分发、最大步数与失败终止判定 |
 | `Tool` / `ToolRequest` / `ToolResult` / `ToolSchemas` | V4 统一工具契约：声明式元信息 + 安全入参 + 统一结果 + Schema 构造 |
 | `WriteFileTool` / `RunCommandTool` | 让 Agent 具备「写文件」与「执行命令」能力的两个新工具 |
+| `CommandRunner` / `CommandResult` / `ProcessCommandRunner` | 共享进程执行入口与结构化结果，支持真实进程和离线替身 |
 | `ListFilesTool` | 递归列出目录文件；支持最大深度与树形输出；返回 `List<String>` |
 | `ReadFileTool` | 读取 UTF-8 文本文件；支持 `offset`/`limit` 分页；返回 `String` |
 | `SearchCodeTool` | 搜索包含关键字/正则的行；返回 `List<Match>`（文件 + 行号 + 内容） |
@@ -358,6 +363,14 @@ V4 补上**写文件**与**执行命令**两类工具，并把整条链路拆成
 | `read_file` / `list_files` / `search_code` | READ | 复用 Lab02 实现，签名未变，只是多实现了一层接口 |
 | `write_file` | WRITE | 创建/覆盖/追加文件，自动创建父目录 |
 | `run_command` | EXECUTE | 在项目根目录执行命令，默认 60 秒超时；超时会结束**整棵进程树** |
+
+命令执行统一经过 `CommandRunner`，默认实现是 `ProcessCommandRunner`。
+`CodingAgentCli` 提供接收 `CommandRunner` 的构造入口，离线测试可替换进程，仍走控制员、守卫和执行员。
+`CommandResult` 保留退出码、超时、耗时、原始解码输出及三态输出完整性（`COMPLETE` / `INCOMPLETE` / `UNKNOWN`）。
+超时没有正常退出码，未捕获输出标为 `INCOMPLETE`；真实 shell 正常退出只证明取得了当时日志快照，无法证明后台后代已关闭输出，故标为 `UNKNOWN`。
+离线替身可明确声明 `COMPLETE`；`outputComplete()` 仅在确认完整时为真，后续验收不能将 `UNKNOWN` 当成完整证据。工具仅对已知不完整输出增加提示，未知状态保持原有显示文案。
+原始输出不在进程层裁剪，`RunCommandTool` 只在回传模型时保留原有的 4000 字符上限和截断提示，`ToolResult` 契约保持不变。
+超时清理会等待 shell 与已发现的后代退出，再释放临时输出文件。
 
 ### 8.3 守卫策略
 
