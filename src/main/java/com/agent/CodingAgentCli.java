@@ -12,6 +12,10 @@ import com.agent.roles.RegistrarRole;
 import com.agent.roles.UserRole;
 import com.agent.session.SessionRecorder;
 import com.agent.session.SessionStore;
+import com.agent.task.TaskRecord;
+import com.agent.task.TaskStore;
+import com.agent.task.TaskAcceptance;
+import com.agent.task.TaskCoordinator;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -52,6 +56,10 @@ public class CodingAgentCli {
     private final SessionStore session;
     private final PrintStream out;
     private final PrintStream err;
+    private final LLMClient client;
+    private final CommandRunner commandRunner;
+    private final BufferedReader in;
+    private final int maxSteps;
 
     /** 不持久化会话的构造（保留给不需要记录的场景与测试）。 */
     public CodingAgentCli(Path root,
@@ -92,8 +100,17 @@ public class CodingAgentCli {
         this.out = out;
         this.err = err;
         this.session = session;
+        this.client = client;
+        this.commandRunner = commandRunner;
+        this.in = in;
+        this.maxSteps = maxSteps;
         this.user = new UserRole(in, out, autoApprove);
-        this.llm = new LlmRole(client, restoredHistory(session), recorder(session));
+        this.llm = client == null ? null : new LlmRole(client, restoredHistory(session), recorder(session));
+        if (client == null) {
+            this.registrar = null;
+            this.controller = null;
+            return;
+        }
         this.registrar = RegistrarRole.standard(this.root, commandRunner);
         GuardRole guard = new GuardRole(this.root);
         ExecutorRole executor = new ExecutorRole(this.root, ExecutorRole.DEFAULT_MAX_RESULT_CHARS, out);
@@ -124,6 +141,7 @@ public class CodingAgentCli {
 
     /** 交互式模式：反复读取自然语言任务，直到 exit/quit 或输入结束。 */
     public int runRepl() {
+        if (client == null) { err.println("对话需要模型配置"); return 2; }
         out.println("AI Coding Agent 已就绪：root=" + root
                 + "，可用工具=" + String.join(", ", registrar.names()));
         if (session != null) {
@@ -181,7 +199,57 @@ public class CodingAgentCli {
 
     /** 单任务模式：跑完一个任务后退出，供脚本化调用（配合 --yes）。 */
     public int runTask(String task) {
+        if (client == null) { err.println("对话需要模型配置"); return 2; }
         out.println("Agent > " + controller.runTask(task));
         return 0;
+    }
+
+    /** 显式任务和普通对话分流，查询不需要模型配置。 */
+    public int startManagedTask(String goal, String acceptanceCommand) {
+        if (client == null) { err.println("任务需要模型配置"); return 2; }
+        try {
+            TaskRecord task = new TaskCoordinator(root, commandRunner, managedSession ->
+                    new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
+                            managedSession, commandRunner).controller, out)
+                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand);
+            return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt(); err.println("任务验收被中断"); return 4;
+        } catch (IOException | java.io.UncheckedIOException failed) {
+            err.println("任务执行或持久化失败: " + failed.getMessage()); return 4;
+        }
+    }
+
+    public int listTasks() {
+        try {
+            List<TaskRecord> tasks = new TaskStore(root).list();
+            if (tasks.isEmpty()) { out.println("暂无任务。"); }
+            for (TaskRecord task : tasks) { printTask(task); }
+            return 0;
+        } catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
+    }
+
+    public int showTask(String id) {
+        try { printTask(new TaskStore(root).read(id)); return 0; }
+        catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
+    }
+
+    private TaskRecord.State printTask(TaskRecord task) throws IOException {
+        TaskRecord.State state = task.state;
+        String reason = task.reason;
+        if (state == TaskRecord.State.Verified
+                && !task.files.equals(com.agent.task.WorkspaceSnapshot.capture(root.toRealPath()))) {
+            state = TaskRecord.State.Paused;
+            reason = "项目输入版本已变化，原验收失效；请新建任务";
+        }
+        out.println("任务: " + task.id + "\n状态: " + state + "\n目标: " + task.goal
+                + "\n会话: " + task.sessionId + "\n验收: " + task.command + "\n原因: " + reason);
+        TaskStore store = new TaskStore(root);
+        for (TaskRecord.EvidenceRef ref : task.checks) {
+            TaskAcceptance.Evidence evidence = store.readEvidence(task, ref);
+            out.println(evidence.kind() + ": " + evidence.verdict() + "，测试数=" + evidence.tests()
+                    + "，原因=" + evidence.reason());
+        }
+        return state;
     }
 }

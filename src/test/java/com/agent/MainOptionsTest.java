@@ -91,4 +91,23 @@ class MainOptionsTest {
     void shouldParseExportFlag() {
         assertEquals("latest", Main.Options.parse(new String[]{"--export", "latest"}).exportId());
     }
+
+    @Test
+    void shouldParseManagedTaskQueriesAndAcceptanceCommand() {
+        assertTrue(Main.Options.parse(new String[]{"--tasks"}).tasks());
+        assertEquals("task-id", Main.Options.parse(new String[]{"--task-status", "task-id"}).taskStatus());
+        assertEquals("mvn -q test", Main.Options.parse(new String[]{"--task", "修复",
+                "--accept-command", "mvn -q test"}).acceptanceCommand());
+    }
+
+    @Test
+    void shouldRejectAmbiguousManagedTaskModes() {
+        for (String[] args : new String[][]{
+                {"--task", "fix", "--local"}, {"--task", "fix", "--tasks"},
+                {"--tasks", "--resume", "latest"}, {"--task-status"},
+                {"--accept-command", "mvn test"}, {"--task", "fix", "--session", "chat"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> Main.Options.parse(args));
+        }
+    }
 }

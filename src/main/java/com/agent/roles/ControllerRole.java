@@ -29,6 +29,9 @@ import java.util.stream.Collectors;
  */
 public class ControllerRole {
 
+    public enum StopReason { COMPLETED, MODEL_FAILED, LIMIT_REACHED }
+    public record RunResult(StopReason reason, String answer) { }
+
     public static final int DEFAULT_MAX_STEPS = 12;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -67,6 +70,11 @@ public class ControllerRole {
      * <p>任何异常都被转换成可读文本返回：CLI 不应该因为一次模型或工具故障而崩溃。
      */
     public String runTask(String task) {
+        return runTaskResult(task).answer();
+    }
+
+    /** 用类型区分真正的完成声明与故障，避免任务协调器解析中文提示。 */
+    public RunResult runTaskResult(String task) {
         llm.beginTask(task);
 
         for (int step = 1; step <= maxSteps; step++) {
@@ -77,7 +85,7 @@ public class ControllerRole {
             try {
                 response = llm.ask(registrar.toolDefinitions());
             } catch (IOException failed) {
-                return "LLM 调用失败: " + failed.getMessage();
+                return new RunResult(StopReason.MODEL_FAILED, "LLM 调用失败: " + failed.getMessage());
             }
             recorder.appendTurn(step, (System.nanoTime() - startedAt) / 1_000_000,
                     response.promptTokens(), response.completionTokens(), toolNamesOf(response));
@@ -86,7 +94,7 @@ public class ControllerRole {
                 String answer = response.content() == null ? "" : response.content();
                 llm.recordFinalAnswer(answer);
                 trace("[控制员] 模型未请求工具，任务结束（共 " + step + " 步）");
-                return answer;
+                return new RunResult(StopReason.COMPLETED, answer);
             }
 
             llm.recordToolCalls(response);
@@ -96,8 +104,8 @@ public class ControllerRole {
             }
         }
 
-        return "达到最大步数限制（" + maxSteps + "），任务未完成。"
-                + "可以补充更明确的指令，或提高 --max-steps 后重试。";
+        return new RunResult(StopReason.LIMIT_REACHED, "达到最大步数限制（" + maxSteps + "），任务未完成。"
+                + "可以补充更明确的指令，或提高 --max-steps 后重试。");
     }
 
     /** 处理单个工具调用：查表 → 守卫 → 确认 → 执行 → 返回 Observation 文本。 */

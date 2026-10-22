@@ -36,14 +36,28 @@ public class Main {
         ConsoleStreams.configureStdout();
         ConsoleStreams.configureStderr();
 
-        Options options = Options.parse(args);
+        Options options;
+        try { options = Options.parse(args); }
+        catch (IllegalArgumentException invalid) {
+            System.err.println("参数错误: " + invalid.getMessage());
+            System.exit(2);
+            return;
+        }
+
+        Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
+        if (options.tasks() || options.taskStatus() != null) {
+            CodingAgentCli query = new CodingAgentCli(root, null, false, options.maxSteps(),
+                    ConsoleStreams.newStdinReader(), System.out, System.err);
+            int code = options.tasks() ? query.listTasks() : query.showTask(options.taskStatus());
+            if (code != 0) { System.exit(code); }
+            return;
+        }
 
         if (options.local()) {
             run(new Agent(), ConsoleStreams.newStdinReader(), System.out, options.upperCase());
             return;
         }
 
-        Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
         Path sessionDir = SessionPaths.resolveDir(root, options.sessionDir());
 
         if (options.exportId() != null) {
@@ -67,7 +81,7 @@ public class Main {
 
         SessionStore session;
         try {
-            session = openSession(sessionDir, options);
+            session = options.task() == null ? openSession(sessionDir, options) : null;
         } catch (IOException failed) {
             System.err.println("会话初始化失败：" + failed.getMessage());
             System.exit(4);
@@ -83,7 +97,8 @@ public class Main {
                 System.err,
                 session);
 
-        int exitCode = options.task() != null ? cli.runTask(options.task()) : cli.runRepl();
+        int exitCode = options.task() != null
+                ? cli.startManagedTask(options.task(), options.acceptanceCommand()) : cli.runRepl();
         if (exitCode != 0) {
             System.exit(exitCode);
         }
@@ -93,7 +108,7 @@ public class Main {
      * 按命令行参数决定这次运行使用哪个会话。
      *
      * <ul>
-     *   <li>{@code --task}：独立任务会话 {@code task-<时间戳>.jsonl}，不续聊（R③）；</li>
+     *   <li>管理任务由任务协调器创建独立聊天，不经过普通聊天恢复；</li>
      *   <li>{@code --resume <id>}：续上指定会话；</li>
      *   <li>{@code --new}：强制新建；</li>
      *   <li>{@code --session <名字>}：同名则续、否则新建；</li>
@@ -101,9 +116,6 @@ public class Main {
      * </ul>
      */
     private static SessionStore openSession(Path dir, Options options) throws IOException {
-        if (options.task() != null) {
-            return SessionStore.start(dir, SessionStore.Mode.NEW, "task-" + SessionPaths.timestampName());
-        }
         if (options.resume() != null) {
             return SessionStore.start(dir, SessionStore.Mode.RESUME, options.resume());
         }
@@ -143,7 +155,8 @@ public class Main {
      */
     record Options(String task, boolean autoApprove, boolean local, boolean upperCase,
                    Path root, int maxSteps, String resume, boolean newSession,
-                   String sessionName, String sessionDir, String exportId) {
+                   String sessionName, String sessionDir, String exportId,
+                   boolean tasks, String taskStatus, String acceptanceCommand) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -157,15 +170,27 @@ public class Main {
             String sessionName = null;
             String sessionDir = null;
             String exportId = null;
+            boolean tasks = false;
+            String taskStatus = null;
+            String acceptanceCommand = null;
 
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
                     String arg = args[i];
                     switch (arg) {
-                        case "--task", "-t" -> {
-                            if (i + 1 < args.length) {
-                                task = args[++i];
+                        case "--tasks" -> tasks = true;
+                        case "--task-status", "--accept-command" -> {
+                            if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
+                                throw new IllegalArgumentException(arg + " 需要非空参数");
                             }
+                            if (arg.equals("--task-status")) { taskStatus = args[++i]; }
+                            else { acceptanceCommand = args[++i]; }
+                        }
+                        case "--task", "-t" -> {
+                            if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
+                                throw new IllegalArgumentException("--task 需要非空目标");
+                            }
+                            task = args[++i];
                         }
                         case "--yes", "-y" -> autoApprove = true;
                         case "--local" -> local = true;
@@ -207,8 +232,17 @@ public class Main {
                     }
                 }
             }
+            int managedModes = (task == null ? 0 : 1) + (tasks ? 1 : 0) + (taskStatus == null ? 0 : 1);
+            if (managedModes > 1 || managedModes > 0 && (local || resume != null || newSession
+                    || sessionName != null || sessionDir != null || exportId != null)) {
+                throw new IllegalArgumentException("管理任务、查询、本地回显和聊天恢复参数不能混用");
+            }
+            if (acceptanceCommand != null && task == null) {
+                throw new IllegalArgumentException("--accept-command 必须与 --task 一起使用");
+            }
+            if (maxSteps <= 0) { throw new IllegalArgumentException("--max-steps 必须为正数"); }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
-                    resume, newSession, sessionName, sessionDir, exportId);
+                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand);
         }
     }
 

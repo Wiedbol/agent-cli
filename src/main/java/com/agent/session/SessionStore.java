@@ -44,7 +44,7 @@ import java.util.stream.Stream;
  * </ul>
  *
  * <p>记录失败（磁盘满、权限不足）不会抛到对话流程：只打印一条提示，
- * 因为「让对话继续」比「记录完整」优先级更高。
+ * 因为「让对话继续」比「记录完整」优先级更高。管理任务使用严格模式，记录失败会停止执行。
  */
 public class SessionStore implements SessionRecorder {
 
@@ -75,6 +75,7 @@ public class SessionStore implements SessionRecorder {
     private boolean resumed;
     private int part;
     private Path currentFile;
+    private boolean strict;
 
     private SessionStore(Path dir, String sessionId, boolean resumed, int part, long maxBytes, PrintStream warn) {
         this.dir = dir;
@@ -97,6 +98,16 @@ public class SessionStore implements SessionRecorder {
         return start(dir, mode, name, SessionPaths.MAX_BYTES, null);
     }
 
+    /** 管理任务不能在聊天写入失败后继续产生副作用，普通聊天仍保持尽力记录。 */
+    public static SessionStore startStrict(Path dir, String name) throws IOException {
+        Files.createDirectories(dir);
+        SessionStore store = new SessionStore(dir, uniqueName(dir, name), false, 1,
+                SessionPaths.MAX_BYTES, null);
+        store.strict = true;
+        store.writeMeta(false);
+        return store;
+    }
+
     /** 供测试注入更小的轮转阈值与告警流。 */
     public static SessionStore start(Path dir, Mode mode, String name, long maxBytes, PrintStream warn)
             throws IOException {
@@ -108,7 +119,8 @@ public class SessionStore implements SessionRecorder {
                     : newSession(dir, name, maxBytes, warn);
             case NEW -> newSession(dir, name, maxBytes, warn);
             case AUTO -> {
-                Optional<String> latestId = latest(dir);
+                Optional<String> latestId = listSessions(dir).stream()
+                        .filter(id -> !id.startsWith("task-")).findFirst();
                 yield latestId.isPresent()
                         ? resumeExisting(dir, latestId.get(), maxBytes, warn)
                         : newSession(dir, null, maxBytes, warn);
@@ -204,9 +216,15 @@ public class SessionStore implements SessionRecorder {
             if (Files.exists(currentFile) && Files.size(currentFile) + bytes.length > maxBytes) {
                 rotate();
             }
-            Files.write(currentFile, bytes,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
+            if (strict) {
+                Files.write(currentFile, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND,
+                        StandardOpenOption.WRITE, StandardOpenOption.SYNC);
+            } else {
+                Files.write(currentFile, bytes,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
+            }
         } catch (IOException failed) {
+            if (strict) { throw new java.io.UncheckedIOException("任务聊天持久化失败", failed); }
             if (warn != null) {
                 warn.println("[会话记录] 写入失败（对话继续）：" + failed.getMessage());
             }

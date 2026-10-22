@@ -44,6 +44,12 @@ agent-cli/
     │   │   ├── CommandRunner.java
     │   │   ├── CommandResult.java
     │   │   └── ProcessCommandRunner.java
+    │   ├── task/                       # 显式任务、独立验收及证据
+    │   │   ├── TaskRecord.java
+    │   │   ├── TaskStore.java
+    │   │   ├── TaskAcceptance.java
+    │   │   ├── TaskCoordinator.java
+    │   │   └── WorkspaceSnapshot.java
     │   ├── llm/
     │   │   ├── LLMClient.java          # 模型客户端接口（依赖倒置的边界）
     │   │   ├── DeepSeekClient.java     # Chat Completions 实现
@@ -106,6 +112,7 @@ agent-cli/
 | `Tool` / `ToolRequest` / `ToolResult` / `ToolSchemas` | V4 统一工具契约：声明式元信息 + 安全入参 + 统一结果 + Schema 构造 |
 | `WriteFileTool` / `RunCommandTool` | 让 Agent 具备「写文件」与「执行命令」能力的两个新工具 |
 | `CommandRunner` / `CommandResult` / `ProcessCommandRunner` | 共享进程执行入口与结构化结果，支持真实进程和离线替身 |
+| `TaskCoordinator` / `TaskStore` / `TaskAcceptance` | 管理任务生命周期、项目写锁、可靠状态保存和独立 Maven 验收 |
 | `ListFilesTool` | 递归列出目录文件；支持最大深度与树形输出；返回 `List<String>` |
 | `ReadFileTool` | 读取 UTF-8 文本文件；支持 `offset`/`limit` 分页；返回 `String` |
 | `SearchCodeTool` | 搜索包含关键字/正则的行；返回 `List<Match>`（文件 + 行号 + 内容） |
@@ -115,7 +122,7 @@ agent-cli/
 ## 3. 构建与测试
 
 ```bash
-mvn test          # 编译 + 运行单元测试（当前 107 个用例），必须 BUILD SUCCESS 且 Failures: 0
+mvn test          # 编译 + 运行离线测试，必须 BUILD SUCCESS 且 Failures: 0
 mvn clean test    # 清理 target/ 后重新构建
 mvn package       # 生成 target/agent-cli-0.1.0.jar（含依赖的 fat jar，清单已配置 Main-Class）
 ```
@@ -400,7 +407,7 @@ java -jar target/agent-cli-0.1.0.jar --yes --task "读取 pom.xml 的 artifactId
 
 | 参数 | 作用 |
 |---|---|
-| `--task "..."` / `-t` | 跑完一个任务即退出 |
+| `--task "..."` / `-t` | 启动管理任务，执行初始检查、编码和独立验收（见第 11 节） |
 | `--yes` / `-y` | 自动同意守卫的确认请求 |
 | `--root <dir>` | 指定项目根目录（沙箱边界），默认当前目录 |
 | `--max-steps N` | 单个任务的最大步数，默认 12 |
@@ -540,3 +547,28 @@ Agent > 蓝色                      ← 历史确实恢复了
 - [Lab03-Report.md](Lab03-Report.md)：LLM Client + ReAct Agent + Tool Calling（V3）
 - [V4-Coding-Agent-Report.md](V4-Coding-Agent-Report.md)：六角色架构说明与效果展示（V4，含截图位，见 `docs/images/`）
 - [HANDOFF.md](HANDOFF.md)：任务交接文档（工程现状、设计决策与坑位、已知问题、下一步）
+
+## 11. 显式任务与独立验收
+
+`--task` 现在启动管理任务，需要 DeepSeek 配置和实际 Maven 项目的 `pom.xml`。任务先运行初始验收，再让模型执行一次有步数限制的编码循环；模型声明完成后，程序独立执行最终验收。验收失败、模型故障或请求耗尽会暂停并返回非零。
+
+```powershell
+java '-Dagent.encoding=UTF-8' -jar target/agent-cli-0.1.0.jar --root E:/demo-project --task "修复计算错误" --yes
+java '-Dagent.encoding=UTF-8' -jar target/agent-cli-0.1.0.jar --root E:/demo-project --task "修复计算错误" --accept-command "mvn -q test" --yes
+java '-Dagent.encoding=UTF-8' -jar target/agent-cli-0.1.0.jar --root E:/demo-project --tasks
+java '-Dagent.encoding=UTF-8' -jar target/agent-cli-0.1.0.jar --root E:/demo-project --task-status <任务标识>
+```
+
+默认验收命令为 `mvn test`，每次验收限时 60 秒。自定义命令也必须产生当前 Surefire XML 测试报告；命令退出 0 或模型回答“已完成”都不足以通过。程序会归档旧 `TEST-*.xml`，核对当前报告的测试身份、实际执行数、失败、错误、跳过及输入文件版本。缺失、损坏、零测试、遗漏已有测试或验收期间输入变化都不能得到 `Verified`。真实 shell 的输出完整性可以为 `UNKNOWN`；验收依据完整的当前 XML 报告，不能把日志快照当成通过证据。
+
+基线必须有可解析、实际执行且未跳过的当前测试报告，才进入编码。缺少 Maven、编译失败但没有测试报告、损坏报告或输入版本变化会先暂停，请排除原因后新建任务。真实测试失败仍可进入本次编码修复。
+
+当前报告适配读取项目根的默认 `target/surefire-reports/TEST-*.xml`，不会扫描或移动源码中的报告样本；自定义报告目录及仅在子模块产生报告的聚合项目会因缺少可用报告而暂停。
+
+任务状态与证据存放在项目 `.agent/tasks/`，聊天在 `.agent/sessions/`，按标识关联。任务使用实际项目路径作为身份，复制或移动后须新建任务；同一项目只允许一个管理任务写入。任务状态和证据采用可靠写入，记录故障会停止后续工作。查询不请求模型、不运行工具、不创建或修改任务数据，也不需要 API Key；验证后输入版本改变时，查询显示原验收失效。
+
+普通聊天的 `--resume` 只恢复对话。默认最近聊天跳过 `task-` 会话，显式聊天 ID 和导出仍可使用；载入聊天不会自动继续任务。任务/查询参数不能与 `--local`、聊天会话或导出参数混用，`--accept-command` 只能用于 `--task`。
+
+管理任务退出码：`0` 为当前验证通过，`1` 为暂停/未完成，`2` 为参数或模型配置错误，`4` 为执行、存储或查询错误。查询成功返回 `0`，与被查询任务的完成状态无关。经验保存不是任务成功的条件。
+
+当前交付只包含一次编码与独立验收。完整的验收保护与重新约定、自动修复、检查点恢复分别由后续 #4、#5、#7 实现；本版暂停后提示检查原因并新建任务，不会自动重试。
