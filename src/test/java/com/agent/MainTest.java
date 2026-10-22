@@ -13,12 +13,24 @@ import java.nio.charset.StandardCharsets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * 验证 CLI 的 I/O 循环：用「字节流 + 指定编码」模拟真实控制台的输入，
  * 从而复现并锁定「中文输入乱码」这一缺陷。
  */
 class MainTest {
+    @org.junit.jupiter.api.Test
+    void shouldParseExperienceModesAndRejectMixedWorkflows() {
+        assertEquals("task", Main.Options.parse(new String[]{"--extract-experience", "task"}).extractExperience());
+        assertTrue(Main.Options.parse(new String[]{"--experiences"}).experiences());
+        assertEquals("id", Main.Options.parse(new String[]{"--experience", "id"}).experience());
+        assertEquals("id", Main.Options.parse(new String[]{"--disable-experience", "id"}).disableExperience());
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--experience"}));
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--experiences", "--task", "x"}));
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--extract-experience", "x", "--max-steps", "4"}));
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--disable-experience", "x", "--resume", "latest"}));
+    }
 
     @Test void shouldParseExplicitReplanAndRejectMixedModes() {
         assertEquals("task", Main.Options.parse(new String[]{"--replan-task", "task", "--yes"}).replanTask());

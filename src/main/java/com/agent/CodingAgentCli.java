@@ -242,6 +242,38 @@ public class CodingAgentCli {
         } catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
     }
 
+    public int extractExperience(String id, boolean interactive) {
+        try {
+            return new com.agent.experience.ExperienceLibrary(root).extract(id, client, in, out, interactive) ? 0 : 1;
+        } catch (IOException failed) { err.println("经验提炼失败: " + failed.getMessage()); return 4; }
+    }
+
+    public int listExperiences() {
+        try {
+            var library = new com.agent.experience.ExperienceLibrary(root);
+            var experiences = library.list();
+            if (experiences.isEmpty()) { out.println("暂无经验。"); }
+            for (var experience : experiences) { library.print(experience, out); }
+            return 0;
+        } catch (IOException failed) { err.println("经验查询失败: " + failed.getMessage()); return 4; }
+    }
+
+    public int showExperience(String id) {
+        try {
+            var library = new com.agent.experience.ExperienceLibrary(root);
+            library.print(library.read(id), out);
+            return 0;
+        } catch (IOException failed) { err.println("经验查询失败: " + failed.getMessage()); return 4; }
+    }
+
+    public int disableExperience(String id) {
+        try {
+            var library = new com.agent.experience.ExperienceLibrary(root);
+            library.print(library.disable(id), out);
+            return 0;
+        } catch (IOException failed) { err.println("经验禁用失败: " + failed.getMessage()); return 4; }
+    }
+
     public int abandonTask(String id, boolean interactive) {
         try {
             printTask(new com.agent.task.TaskResolution(root, in, out).abandon(id, interactive));

@@ -1,0 +1,273 @@
+package com.agent;
+
+import com.agent.command.CommandResult;
+import com.agent.command.CommandRunner;
+import com.agent.llm.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.List;
+import java.util.regex.Pattern;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class CodingAgentCliExperienceTest {
+    @TempDir Path root;
+    private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+    private static final String ADVICE = "{\"conditions\":\"App计算边界错误\",\"errorFeatures\":\"AppTest#checks expected fixed\","
+            + "\"recommendation\":\"检查边界分支并修复返回值，运行当前测试验证\",\"limitations\":\"不适用于构建或网络错误\"}";
+    private String text() { return output.toString(StandardCharsets.UTF_8); }
+    private Path source() { return root.resolve("src/main/java/App.java"); }
+    private CodingAgentCli cli(LLMClient model, String input) {
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        return new CodingAgentCli(root, model, true, 12, new BufferedReader(new StringReader(input)),
+                stream, stream, null, acceptance());
+    }
+    private CommandRunner acceptance() {
+        return (dir, command, timeout) -> {
+            boolean fixed = Files.readString(source()).equals("fixed");
+            Path reports = Files.createDirectories(root.resolve("target/surefire-reports"));
+            Files.writeString(reports.resolve("TEST-AppTest.xml"), "<testsuite tests=\"1\" failures=\""
+                    + (fixed ? 0 : 1) + "\" errors=\"0\" skipped=\"0\"><testcase classname=\"AppTest\" name=\"checks\">"
+                    + (fixed ? "" : "<failure message=\"expected fixed\"/>") + "</testcase></testsuite>");
+            return new CommandResult(fixed ? 0 : 1, false, "fixture", 1, CommandResult.OutputCompleteness.COMPLETE);
+        };
+    }
+    private String task(boolean initiallyFixed) throws Exception {
+        Files.writeString(root.resolve("pom.xml"), "<project/>");
+        Files.createDirectories(source().getParent());
+        Files.writeString(source(), initiallyFixed ? "fixed" : "broken");
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("repair",
+                new ToolCall.Function("write_file", "{\"path\":\"src/main/java/App.java\",\"content\":\"fixed\"}"))), 1, 1),
+                new LLMResponse("请验收", null, 1, 1)));
+        assertEquals(0, cli(model, "").startManagedTask("修复计算", null), text());
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find(), text());
+        return match.group(1);
+    }
+
+    @Test void shouldApproveSourcedExperienceAndManageItAfterRebuildingCli() throws Exception {
+        String task = task(false);
+        var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 2, 3)));
+        assertEquals(0, cli(model, "save " + task + "\n").extractExperience(task, true), text());
+        assertEquals(1, model.callCount());
+        assertTrue(model.requests().get(0).stream().anyMatch(m -> m.content().contains("expected fixed")));
+        output.reset();
+        assertEquals(0, cli(null, "").listExperiences(), text());
+        var match = Pattern.compile("经验: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find(), text());
+        String experience = match.group(1);
+        assertEquals(0, cli(null, "").showExperience(experience), text());
+        assertTrue(text().contains(task), text());
+        assertTrue(text().contains("repair"), text());
+        assertTrue(text().contains("AppTest#checks"), text());
+        assertEquals(0, cli(null, "").disableExperience(experience), text());
+        output.reset();
+        assertEquals(0, cli(null, "").showExperience(experience), text());
+        assertTrue(text().contains("启用: false"), text());
+        assertEquals(0, cli(null, "").showTask(task));
+        assertTrue(text().contains("状态: Verified"), text());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"no-failure", "stale", "unverified", "missing-repair", "wrong-call", "wrong-failure", "corrupt-evidence"})
+    void shouldRejectUnprovenSourceBeforeAskingModel(String invalid) throws Exception {
+        String task = task(invalid.equals("no-failure"));
+        var store = new com.agent.task.TaskStore(root);
+        var record = store.read(task);
+        switch (invalid) {
+            case "stale" -> Files.writeString(source(), "human edit");
+            case "unverified" -> { record.state = com.agent.task.TaskRecord.State.Paused; store.save(record); }
+            case "missing-repair" -> { record.progress.decisions.get(0).operations.get(0).changes.clear(); store.save(record); }
+            case "wrong-call" -> { record.progress.decisions.get(0).operations.get(0).callId = "nonexistent-call"; store.save(record); }
+            case "wrong-failure" -> { record.progress.decisions.get(0).failureSource = record.checks.get(1).id(); store.save(record); }
+            case "corrupt-evidence" -> Files.writeString(root.resolve(".agent/tasks/" + task + "/" + record.checks.get(0).id() + "/result.json"), "{}");
+        }
+        var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 1, 1)));
+        assertEquals(4, cli(model, "save " + task + "\n").extractExperience(task, true), text());
+        assertEquals(0, model.callCount());
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"", "y\n", "save wrong-id\n"})
+    void shouldKeepVerifiedTaskWhenExperienceIsDeclined(String answer) throws Exception {
+        String task = task(false);
+        var before = Files.readAllBytes(root.resolve(".agent/tasks/" + task + "/state.json"));
+        var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 1, 1)));
+        assertEquals(1, cli(model, answer).extractExperience(task, true), text());
+        assertArrayEquals(before, Files.readAllBytes(root.resolve(".agent/tasks/" + task + "/state.json")));
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+    }
+
+    @Test void shouldNeverReadInputOrAskModelForNoninteractiveExtraction() throws Exception {
+        String task = task(false);
+        var model = new FakeLLMClient(List.of());
+        var input = new BufferedReader(new StringReader("")) {
+            @Override public String readLine() { fail("非交互不能读取确认"); return null; }
+        };
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var facade = new CodingAgentCli(root, model, true, 12, input, stream, stream, null, acceptance());
+        assertEquals(1, facade.extractExperience(task, false), text());
+        assertEquals(0, model.callCount());
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+        assertTrue(text().contains("--yes 不适用"), text());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"secret", "json-secret", "escaped-secret", "filtered", "blank", "forged-source", "malformed"})
+    void shouldRejectUnsafeOrUnusableAdviceWithoutPersistingIt(String invalid) throws Exception {
+        String task = task(false);
+        String advice = switch (invalid) {
+            case "secret" -> ADVICE.replace("检查边界分支并修复返回值，运行当前测试验证", "api_key=sk-1234567890123456789012345");
+            case "json-secret" -> ((com.fasterxml.jackson.databind.node.ObjectNode) new com.fasterxml.jackson.databind.ObjectMapper().readTree(ADVICE))
+                    .put("recommendation", "使用 {\"api_key\":\"plain-private-value\"}").toString();
+            case "escaped-secret" -> ((com.fasterxml.jackson.databind.node.ObjectNode) new com.fasterxml.jackson.databind.ObjectMapper().readTree(ADVICE))
+                    .put("recommendation", "使用 {\\\"api_key\\\":\\\"plain-private-value\\\"}").toString();
+            case "filtered" -> ADVICE.replace("App计算边界错误", com.agent.session.Redactor.PLACEHOLDER);
+            case "blank" -> ADVICE.replace("App计算边界错误", "");
+            case "forged-source" -> ADVICE.replace("}", ",\"sourceTask\":\"pretend-source\"}");
+            default -> "not json";
+        };
+        var model = new FakeLLMClient(List.of(new LLMResponse(advice, null, 1, 1)));
+        assertEquals(4, cli(model, "save " + task + "\n").extractExperience(task, true), text());
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+        assertEquals(com.agent.task.TaskRecord.State.Verified, new com.agent.task.TaskStore(root).read(task).state);
+    }
+
+    @Test void shouldRejectSourceChangesDuringConfirmationAndKeepHumanFiles() throws Exception {
+        String task = task(false);
+        var before = Files.readAllBytes(root.resolve(".agent/tasks/" + task + "/state.json"));
+        var input = new BufferedReader(new StringReader("")) {
+            @Override public String readLine() throws IOException {
+                Files.writeString(source(), "human change during approval");
+                return "save " + task;
+            }
+        };
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 1, 1)));
+        var facade = new CodingAgentCli(root, model, true, 12, input, stream, stream, null, acceptance());
+        assertEquals(4, facade.extractExperience(task, true), text());
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+        assertArrayEquals(before, Files.readAllBytes(root.resolve(".agent/tasks/" + task + "/state.json")));
+        assertEquals("human change during approval", Files.readString(source()));
+    }
+
+    private String approve(String task) {
+        var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 1, 1)));
+        assertEquals(0, cli(model, "save " + task + "\n").extractExperience(task, true), text());
+        var match = Pattern.compile("已保存经验: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find(), text());
+        return match.group(1);
+    }
+
+    @Test void shouldKeepHistoricalProvenanceWhileLaterWorkspaceChangesAndMarkMissingSource() throws Exception {
+        String task = task(false);
+        String experience = approve(task);
+        Files.writeString(source(), "different task workspace");
+        output.reset();
+        assertEquals(0, cli(null, "").showExperience(experience));
+        assertTrue(text().contains("来源可用: true"), text());
+        Files.delete(root.resolve(".agent/tasks/" + task + "/state.json"));
+        output.reset();
+        assertEquals(0, cli(null, "").showExperience(experience));
+        assertTrue(text().contains("来源可用: false"), text());
+        assertEquals(0, cli(null, "").disableExperience(experience));
+    }
+
+    @Test void shouldRejectCorruptOrCopiedExperienceAndInvalidIdentifiers() throws Exception {
+        String task = task(false);
+        String experience = approve(task);
+        Path record = root.resolve(".agent/experiences/" + experience + ".json");
+        Path other = Files.createDirectories(root.resolve("other-project"));
+        Path copy = Files.createDirectories(other.resolve(".agent/experiences")).resolve(record.getFileName());
+        Files.copy(record, copy);
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var copied = new CodingAgentCli(other, null, true, 12, new BufferedReader(new StringReader("")),
+                stream, stream, null, acceptance());
+        assertEquals(4, copied.showExperience(experience), text());
+        Files.writeString(record, Files.readString(record).replace("检查边界", "伪造边界"));
+        assertEquals(4, cli(null, "").showExperience(experience), text());
+        assertEquals(4, cli(null, "").showExperience("../escape"));
+        assertEquals(4, cli(null, "").disableExperience("bad-id"));
+    }
+
+    @Test void shouldNotSaveWhenStorageFailsAndLeaveTaskUntouched() throws Exception {
+        String task = task(false);
+        var before = Files.readAllBytes(root.resolve(".agent/tasks/" + task + "/state.json"));
+        var input = new BufferedReader(new StringReader("")) {
+            @Override public String readLine() throws IOException {
+                Files.writeString(root.resolve(".agent/experiences"), "storage unavailable");
+                return "save " + task;
+            }
+        };
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 1, 1)));
+        var facade = new CodingAgentCli(root, model, true, 12, input, stream, stream, null, acceptance());
+        assertEquals(4, facade.extractExperience(task, true), text());
+        assertArrayEquals(before, Files.readAllBytes(root.resolve(".agent/tasks/" + task + "/state.json")));
+        assertEquals("storage unavailable", Files.readString(root.resolve(".agent/experiences")));
+    }
+
+    @Test void shouldNotUseFailureFromPreviousAcceptanceAgreement() throws Exception {
+        String task = task(false);
+        assertEquals(1, cli(null, "approve " + task + "\n").reagreeAcceptance(task, "mvn test", true), text());
+        var model = new FakeLLMClient(List.of(new LLMResponse("完成", null, 1, 1)));
+        assertEquals(0, cli(model, "").resumeManagedTask(task, false), text());
+        var extraction = new FakeLLMClient(List.of());
+        assertEquals(4, cli(extraction, "save " + task + "\n").extractExperience(task, true), text());
+        assertEquals(0, extraction.callCount());
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+    }
+
+    @Test void shouldAcceptRepairExecutedThroughRecordedCommand() throws Exception {
+        Files.writeString(root.resolve("pom.xml"), "<project/>");
+        Files.createDirectories(source().getParent());
+        Files.writeString(source(), "broken");
+        CommandRunner runner = (dir, command, timeout) -> {
+            if (command.equals("fixture-repair")) {
+                Files.writeString(source(), "fixed");
+                return new CommandResult(0, false, "fixed source", 1, CommandResult.OutputCompleteness.COMPLETE);
+            }
+            return acceptance().run(dir, command, timeout);
+        };
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("command-repair",
+                new ToolCall.Function("run_command", "{\"command\":\"fixture-repair\"}"))), 1, 1),
+                new LLMResponse("请验收", null, 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var facade = new CodingAgentCli(root, model, true, 12, new BufferedReader(new StringReader("")),
+                stream, stream, null, runner);
+        assertEquals(0, facade.startManagedTask("修复", null), text());
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find());
+        String task = match.group(1);
+        approve(task);
+        assertTrue(text().contains("command-repair"), text());
+    }
+
+    @Test void shouldNotTurnHumanOnlyRepairIntoRecordedAgentExperience() throws Exception {
+        Files.writeString(root.resolve("pom.xml"), "<project/>");
+        Files.createDirectories(source().getParent());
+        Files.writeString(source(), "broken");
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("read-only",
+                new ToolCall.Function("read_file", "{\"path\":\"src/main/java/App.java\"}"))), 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var facade = new CodingAgentCli(root, model, true, 1, new BufferedReader(new StringReader("")),
+                stream, stream, null, acceptance());
+        assertEquals(1, facade.startManagedTask("修复", null), text());
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find());
+        String task = match.group(1);
+        Files.writeString(source(), "fixed");
+        assertEquals(1, cli(null, "replan " + task + "\n").replanTask(task, true));
+        assertEquals(0, cli(null, "").raiseTaskBudget(task, 3));
+        var completion = new FakeLLMClient(List.of(new LLMResponse("人工已修好，请验收", null, 1, 1)));
+        assertEquals(0, cli(completion, "").resumeManagedTask(task, false), text());
+        var extraction = new FakeLLMClient(List.of());
+        assertEquals(4, cli(extraction, "save " + task + "\n").extractExperience(task, true), text());
+        assertEquals(0, extraction.callCount());
+        assertFalse(Files.exists(root.resolve(".agent/experiences")));
+    }
+}
