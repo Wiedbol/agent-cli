@@ -17,7 +17,7 @@ import java.nio.file.Path;
 import java.util.Set;
 import java.util.function.BiFunction;
 
-/** 一次编码后独立验收；恢复和自动修复由后续票增量实现。 */
+/** 真实失败驱动修复，验收判定独立于模型声明；恢复由后续票实现。 */
 public final class TaskCoordinator {
     private final Path root;
     private final CommandRunner runner;
@@ -33,8 +33,19 @@ public final class TaskCoordinator {
     }
 
     public TaskRecord start(String goal, String command) throws IOException, InterruptedException {
+        return start(goal, command, ControllerRole.DEFAULT_MAX_STEPS);
+    }
+
+    public TaskRecord start(String goal, String command, int maxRequests) throws IOException, InterruptedException {
+        return start(goal, command, maxRequests, false);
+    }
+
+    public TaskRecord start(String goal, String command, int maxRequests, boolean interactive)
+            throws IOException, InterruptedException {
         Path project = root.toRealPath();
-        if (goal == null || goal.isBlank() || command.isBlank() || !Files.isRegularFile(project.resolve("pom.xml"))) {
+        if (maxRequests <= 0) { throw new IOException("总请求预算必须为正数"); }
+        if (goal == null || goal.isBlank() || command == null || command.isBlank()
+                || !Files.isRegularFile(project.resolve("pom.xml"))) {
             throw new IOException("管理任务需要非空目标、验收命令和 Maven 项目的 pom.xml");
         }
         var arguments = new ObjectMapper().createObjectNode().put("command", command);
@@ -43,6 +54,12 @@ public final class TaskCoordinator {
         TaskStore store = new TaskStore(project);
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.create(goal, command);
+            if (maxRequests > task.progress.maxRequests) {
+                task.progress.budgetChanges.add(new TaskRecord.BudgetChange(task.progress.maxRequests,
+                        maxRequests, System.currentTimeMillis()));
+            }
+            task.progress.maxRequests = maxRequests;
+            TaskProgress progress = new TaskProgress(project, store, task, interactive);
             out.println("任务: " + task.id);
             try {
                 Path sessions = SessionPaths.defaultDir(project);
@@ -56,39 +73,87 @@ public final class TaskCoordinator {
                 store.save(task);
                 TaskAcceptance.Evidence baseline = acceptance.check(task, "baseline", Set.of());
                 if (!baseline.codingAllowed()) {
-                    return pause(store, task, "初始验收证据不可用: " + baseline.reason());
+                    return pause(store, task, "初始验收证据不可用: " + baseline.reason(), progress);
                 }
+                progress.acceptanceChecked(baseline, false);
                 task.state = TaskRecord.State.Running;
                 store.save(task);
-                ControllerRole.RunResult result = controllerFactory.apply(session,
-                        new TaskProtection(project, task.acceptanceFiles)).runTaskResult(goal
-                        + "\n初始验收: " + baseline.verdict() + " " + baseline.reason());
-                out.println("Agent > " + result.answer());
-                if (result.reason() != ControllerRole.StopReason.COMPLETED || result.answer().isBlank()) {
-                    return pause(store, task, result.answer().isBlank() ? "模型没有给出完成声明" : result.answer());
+                ControllerRole controller = controllerFactory.apply(session,
+                        new TaskProtection(project, task.acceptanceFiles));
+                String feedback = goal + "\n初始" + feedback(baseline);
+                while (true) {
+                    ControllerRole.RunResult result;
+                    try { result = controller.runTaskResult(feedback, progress); }
+                    catch (TaskProgress.Recheck repeated) { result = null; }
+                    if (result != null) {
+                        out.println("Agent > " + result.answer());
+                        if (result.reason() != ControllerRole.StopReason.COMPLETED || result.answer().isBlank()) {
+                            return pause(store, task, result.answer().isBlank() ? "模型没有给出完成声明" : result.answer(), progress);
+                        }
+                    }
+                    task.state = TaskRecord.State.Verifying;
+                    store.save(task);
+                    TaskAcceptance.Evidence verified = acceptance.check(task, "final", baseline.identities());
+                    if (!verified.codingAllowed()) { return pause(store, task, verified.reason(), progress); }
+                    progress.acceptanceChecked(verified, result != null);
+                    if (result != null && verified.verdict().equals("PASSED")) {
+                        task.state = TaskRecord.State.Verified;
+                        task.reason = "";
+                        progress.save();
+                        return task;
+                    }
+                    feedback = feedback(verified) + "\n请根据真实验收结果继续处理目标，完成后申请重新验收。";
+                    task.state = TaskRecord.State.Running;
+                    progress.save();
                 }
-                task.state = TaskRecord.State.Verifying;
-                store.save(task);
-                TaskAcceptance.Evidence verified = acceptance.check(task, "final", baseline.identities());
-                if (!verified.verdict().equals("PASSED")) { return pause(store, task, verified.reason()); }
-                task.state = TaskRecord.State.Verified;
-                task.reason = "";
-                store.save(task);
-                return task;
+            } catch (TaskProgress.Pause stopped) {
+                return pause(store, task, stopped.getMessage(), progress);
             } catch (TaskProtection.Violation violation) {
-                return pause(store, task, violation.getMessage());
+                return pause(store, task, violation.getMessage(), progress);
             } catch (IOException | UncheckedIOException | InterruptedException failed) {
-                try { pause(store, task, "执行或持久化失败: " + failed.getMessage()); }
+                try { pause(store, task, "执行或持久化失败: " + failed.getMessage(), progress); }
                 catch (IOException saveFailed) { failed.addSuppressed(saveFailed); }
                 throw failed;
             }
         }
     }
 
+    /** 提高额度与恢复执行分开，非交互调用不会等待输入或重置历史消耗。 */
+    public TaskRecord raiseBudget(String id, int maximum) throws IOException {
+        TaskStore store = new TaskStore(root);
+        try (TaskStore.Writer writer = store.lock()) {
+            TaskRecord task = store.read(id);
+            if (task.state != TaskRecord.State.Paused || task.schemaVersion < 3) {
+                throw new IOException("只能提高已有累计统计的暂停任务预算");
+            }
+            if (maximum <= task.progress.maxRequests) { throw new IOException("新总预算必须大于当前总预算"); }
+            task.progress.budgetChanges.add(new TaskRecord.BudgetChange(task.progress.maxRequests,
+                    maximum, System.currentTimeMillis()));
+            task.progress.maxRequests = maximum;
+            task.reason = "总预算已明确提高，累计消耗未重置；任务仍暂停，未执行恢复";
+            store.save(task);
+            return task;
+        }
+    }
+
+    private String feedback(TaskAcceptance.Evidence evidence) {
+        return "验收: " + evidence.verdict() + " " + evidence.reason() + "\n"
+                + evidence.details() + "\n命令输出: "
+                + (evidence.process() == null ? "未执行" : evidence.process().output());
+    }
+
     private TaskRecord pause(TaskStore store, TaskRecord task, String reason) throws IOException {
+        return pause(store, task, reason, null);
+    }
+
+    private TaskRecord pause(TaskStore store, TaskRecord task, String reason, TaskProgress progress) throws IOException {
         task.state = TaskRecord.State.Paused;
-        task.reason = reason + "；下一步：检查原因，可新建任务；合法验收变更须明确重新约定，本版不会自动重试";
-        store.save(task);
+        task.reason = reason + "；下一步：检查证据与预算，合法验收变更须明确重新约定；任务恢复由后续版本提供";
+        if (progress == null) { store.save(task); }
+        else {
+            try { progress.save(); }
+            catch (UncheckedIOException failure) { throw failure.getCause(); }
+        }
         return task;
     }
 

@@ -32,6 +32,18 @@ public class ControllerRole {
     public enum StopReason { COMPLETED, MODEL_FAILED, LIMIT_REACHED }
     public record RunResult(StopReason reason, String answer) { }
 
+    /** 管理任务严格保存执行边界，普通聊天不引入任务持久化语义。 */
+    public interface DecisionObserver {
+        DecisionObserver NONE = new DecisionObserver() { };
+        default void beforeRequest() { }
+        default void responded(LLMResponse response, long millis) { }
+        default void modelFailed(IOException failure, long millis) { }
+        default void beforeTool(ToolCall call) { }
+        default void approvalRequired() { }
+        default void toolFinished(ToolCall call, boolean success, String observation) { }
+        default void roundFinished() { }
+    }
+
     public static final int DEFAULT_MAX_STEPS = 12;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -84,18 +96,26 @@ public class ControllerRole {
 
     /** 用类型区分真正的完成声明与故障，避免任务协调器解析中文提示。 */
     public RunResult runTaskResult(String task) {
+        return runTaskResult(task, DecisionObserver.NONE);
+    }
+
+    public RunResult runTaskResult(String task, DecisionObserver observer) {
         llm.beginTask(task);
 
         for (int step = 1; step <= maxSteps; step++) {
             trace("[控制员] 第 " + step + "/" + maxSteps + " 步：让 LLM 决定下一步");
 
             LLMResponse response;
+            checkInputs.run();
+            observer.beforeRequest();
             long startedAt = System.nanoTime();
             try {
                 response = llm.ask(registrar.toolDefinitions());
             } catch (IOException failed) {
+                observer.modelFailed(failed, (System.nanoTime() - startedAt) / 1_000_000);
                 return new RunResult(StopReason.MODEL_FAILED, "LLM 调用失败: " + failed.getMessage());
             }
+            observer.responded(response, (System.nanoTime() - startedAt) / 1_000_000);
             recorder.appendTurn(step, (System.nanoTime() - startedAt) / 1_000_000,
                     response.promptTokens(), response.completionTokens(), toolNamesOf(response));
 
@@ -109,10 +129,13 @@ public class ControllerRole {
             llm.recordToolCalls(response);
             for (ToolCall call : response.toolCalls()) {
                 checkInputs.run();
-                String observation = dispatch(call);
-                llm.recordToolResult(call, observation);
+                observer.beforeTool(call);
+                DispatchResult result = dispatch(call, observer);
+                observer.toolFinished(call, result.success(), result.observation());
+                llm.recordToolResult(call, result.observation());
                 checkInputs.run();
             }
+            observer.roundFinished();
         }
 
         return new RunResult(StopReason.LIMIT_REACHED, "达到最大步数限制（" + maxSteps + "），任务未完成。"
@@ -120,17 +143,19 @@ public class ControllerRole {
     }
 
     /** 处理单个工具调用：查表 → 守卫 → 确认 → 执行 → 返回 Observation 文本。 */
-    private String dispatch(ToolCall call) {
+    private record DispatchResult(boolean success, String observation) { }
+
+    private DispatchResult dispatch(ToolCall call, DecisionObserver observer) {
         trace("[控制员] 模型请求调用工具: " + call.name() + "，参数: " + call.arguments());
 
         Optional<Tool> found = registrar.find(call.name());
         if (found.isEmpty()) {
-            return "未知工具: " + call.name() + "（可用工具: " + String.join(", ", registrar.names()) + "）";
+            return new DispatchResult(false, "未知工具: " + call.name() + "（可用工具: " + String.join(", ", registrar.names()) + "）");
         }
 
         JsonNode arguments = parseArguments(call.arguments());
         if (arguments == null) {
-            return "工具参数不是合法 JSON 对象: " + call.arguments();
+            return new DispatchResult(false, "工具参数不是合法 JSON 对象: " + call.arguments());
         }
 
         Tool tool = found.get();
@@ -138,16 +163,17 @@ public class ControllerRole {
         trace("[守卫] " + decision.outcome() + "：" + decision.reason());
 
         if (!decision.allowed()) {
-            return "守卫拒绝了这次工具调用 —— " + decision.reason();
+            return new DispatchResult(false, "守卫拒绝了这次工具调用 —— " + decision.reason());
         }
+        if (decision.needsConfirmation() && !user.autoApprove()) { observer.approvalRequired(); }
         if (decision.needsConfirmation() && !user.confirm(decision.reason() + "，是否允许？")) {
-            return "用户拒绝了这次工具调用 —— " + decision.reason();
+            return new DispatchResult(false, "用户拒绝了这次工具调用 —— " + decision.reason());
         }
 
         ToolResult result = executor.execute(tool, arguments);
         trace("[执行员] " + (result.success() ? "执行成功" : "执行失败")
                 + "（" + result.durationMillis() + " ms）");
-        return result.toObservation();
+        return new DispatchResult(result.success(), result.toObservation());
     }
 
     /** 解析模型给出的参数 JSON；非法 JSON 返回 {@code null} 由调用方转成 Observation。 */

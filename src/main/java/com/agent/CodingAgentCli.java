@@ -214,12 +214,16 @@ public class CodingAgentCli {
 
     /** 显式任务和普通对话分流，查询不需要模型配置。 */
     public int startManagedTask(String goal, String acceptanceCommand) {
+        return startManagedTask(goal, acceptanceCommand, ConsoleStreams.hasInteractiveConsole());
+    }
+
+    public int startManagedTask(String goal, String acceptanceCommand, boolean interactive) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
                             managedSession, commandRunner, protection).controller, out)
-                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand);
+                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); err.println("任务验收被中断"); return 4;
@@ -240,6 +244,13 @@ public class CodingAgentCli {
     public int showTask(String id) {
         try { printTask(new TaskStore(root).read(id)); return 0; }
         catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
+    }
+
+    public int raiseTaskBudget(String id, int maximum) {
+        try {
+            printTask(new TaskCoordinator(root, commandRunner, null, out).raiseBudget(id, maximum));
+            return 0;
+        } catch (IOException failed) { err.println("提高预算失败: " + failed.getMessage()); return 4; }
     }
 
     /** 重新约定只记录新基线，不隐式继续编码，也不会恢复旧 Verified。 */
@@ -267,6 +278,25 @@ public class CodingAgentCli {
         out.println("任务: " + task.id + "\n状态: " + state + "\n目标: " + task.goal
                 + "\n会话: " + task.sessionId + "\n验收: " + task.command
                 + "\n验收版本: " + task.acceptanceVersion + "\n原因: " + reason);
+        var progress = task.progress;
+        out.println("模型请求: " + progress.requests + "/" + progress.maxRequests
+                + "\n工具调用: " + progress.tools + "\ntoken: 输入=" + progress.promptTokens
+                + "，输出=" + progress.completionTokens + "，未知请求=" + progress.unknownRequests
+                + "\n累计耗时: " + progress.elapsedMillis + " ms");
+        for (var decision : progress.decisions) {
+            out.println("决策 " + decision.number + ": " + decision.status + "，验收版本="
+                    + decision.acceptanceVersion + "，失败来源=" + decision.failureSource);
+            for (var operation : decision.operations) {
+                out.println("工具 " + operation.callId + ": " + operation.tool + " " + operation.status
+                        + "，修改=" + operation.changes.keySet());
+            }
+        }
+        for (var change : progress.budgetChanges) {
+            out.println("预算调整: " + change.previous() + " -> " + change.current() + "，时间=" + change.at());
+        }
+        for (var error : progress.errors.entrySet()) {
+            out.println("核心错误轮次: " + error.getValue() + "，错误=" + progress.errorDescriptions.get(error.getKey()));
+        }
         for (TaskRecord.EvidenceRef ref : task.checks) {
             TaskAcceptance.Evidence evidence = store.readEvidence(task, ref);
             out.println(evidence.kind() + ": " + evidence.verdict() + "，测试数=" + evidence.tests()

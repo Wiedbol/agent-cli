@@ -77,7 +77,7 @@ public final class TaskStore {
 
     public TaskRecord create(String goal, String command) throws IOException {
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 2;
+        task.schemaVersion = 3;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
@@ -105,7 +105,27 @@ public final class TaskStore {
             ((com.fasterxml.jackson.databind.node.ObjectNode) agreement).put("command",
                     Redactor.redact(agreement.path("command").asText()).text());
         }
+        for (var decision : persisted.path("progress").path("decisions")) {
+            for (var operation : decision.path("operations")) {
+                String arguments = operation.path("arguments").asText(null);
+                var object = (com.fasterxml.jackson.databind.node.ObjectNode) operation;
+                object.put("observation", Redactor.redact(operation.path("observation").asText(), arguments).text());
+                object.put("arguments", Redactor.redact(arguments, arguments).text());
+            }
+        }
+        redactText(persisted.path("progress"));
         atomicWrite(state, JSON.writeValueAsBytes(persisted));
+    }
+
+    private void redactText(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.isObject()) {
+            var object = (com.fasterxml.jackson.databind.node.ObjectNode) node;
+            var fields = object.properties();
+            for (var entry : fields) {
+                if (entry.getValue().isTextual()) { object.put(entry.getKey(), Redactor.redact(entry.getValue().asText()).text()); }
+                else { redactText(entry.getValue()); }
+            }
+        } else if (node.isArray()) { node.forEach(this::redactText); }
     }
 
     private void atomicWrite(Path path, byte[] bytes) throws IOException {
@@ -132,14 +152,23 @@ public final class TaskStore {
             throw new IOException("任务状态缺少必要字段");
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion != 1 && task.schemaVersion != 2) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 3) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
-                || task.agreementHistory == null || task.schemaVersion == 2 && !node.hasNonNull("agreementHistory")) {
+                || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
+                || task.progress == null || task.schemaVersion == 3 && !node.hasNonNull("progress")) {
             throw new IOException("任务状态损坏或版本不支持");
         }
         if (!root.toString().replace('\\', '/').equals(task.project)) {
             throw new IOException("任务属于其他项目，移动或复制后必须新建任务");
+        }
+        if (task.schemaVersion == 3) {
+            for (String field : List.of("maxRequests", "requests", "tools", "promptTokens", "completionTokens",
+                    "unknownRequests", "elapsedMillis", "errors", "decisions", "budgetChanges",
+                    "acceptanceErrors", "toolErrors", "errorDescriptions")) {
+                if (!node.path("progress").hasNonNull(field)) { throw new IOException("任务消耗记录损坏: " + field); }
+            }
+            validateProgress(task.progress);
         }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
         for (TaskRecord.Agreement agreement : task.agreementHistory) {
@@ -156,6 +185,41 @@ public final class TaskStore {
                     || !task.files.equals(finalCheck.files())) { throw new IOException("验证状态与证据不匹配"); }
         }
         return task;
+    }
+
+    private void validateProgress(TaskRecord.Progress progress) throws IOException {
+        if (progress.maxRequests <= 0 || progress.requests < 0 || progress.requests > progress.maxRequests
+                || progress.tools < 0 || progress.promptTokens < 0 || progress.completionTokens < 0
+                || progress.unknownRequests < 0 || progress.elapsedMillis < 0 || progress.decisions == null
+                || progress.decisions.size() != progress.requests || progress.errors == null
+                || progress.acceptanceErrors == null || progress.toolErrors == null
+                || progress.errorDescriptions == null || progress.budgetChanges == null) {
+            throw new IOException("任务累计消耗记录损坏");
+        }
+        long prompt = 0, completion = 0;
+        int unknown = 0, tools = 0, number = 0;
+        for (var decision : progress.decisions) {
+            if (decision == null || decision.number != ++number || decision.acceptanceVersion == null
+                    || decision.failureSource == null || decision.status == null || decision.operations == null
+                    || decision.promptTokens != null && decision.promptTokens < 0
+                    || decision.completionTokens != null && decision.completionTokens < 0) {
+                throw new IOException("模型决策消耗记录损坏");
+            }
+            prompt += decision.promptTokens == null ? 0 : decision.promptTokens;
+            completion += decision.completionTokens == null ? 0 : decision.completionTokens;
+            if (decision.promptTokens == null || decision.completionTokens == null) { unknown++; }
+            for (var operation : decision.operations) {
+                if (operation == null || operation.status == null || operation.changes == null) {
+                    throw new IOException("工具操作记录损坏");
+                }
+                if (operation.status != TaskRecord.OperationState.REQUESTED) { tools++; }
+            }
+        }
+        if (prompt != progress.promptTokens || completion != progress.completionTokens
+                || unknown != progress.unknownRequests || tools != progress.tools
+                || progress.errors.values().stream().anyMatch(count -> count == null || count < 0)) {
+            throw new IOException("任务累计消耗与执行证据不匹配");
+        }
     }
 
     public Path evidenceDirectory(String taskId, String checkId) throws IOException {
@@ -176,7 +240,14 @@ public final class TaskStore {
     }
 
     public void saveEvidence(TaskRecord task, String id, TaskAcceptance.Evidence evidence) throws IOException {
-        byte[] bytes = JSON.writeValueAsBytes(evidence);
+        var process = evidence.process();
+        var safeProcess = process == null ? null : new com.agent.command.CommandResult(process.exitCode(),
+                process.timedOut(), Redactor.redact(process.output()).text(), process.durationMillis(), process.outputCompleteness());
+        var safe = new TaskAcceptance.Evidence(evidence.kind(), evidence.verdict(), Redactor.redact(evidence.reason()).text(),
+                evidence.acceptanceVersion(), evidence.files(), safeProcess, evidence.tests(), evidence.identities(),
+                evidence.reports(), evidence.codingAllowed(), evidence.failures() == null ? List.of()
+                : evidence.failures().stream().map(value -> Redactor.redact(value).text()).toList());
+        byte[] bytes = JSON.writeValueAsBytes(safe);
         atomicWrite(evidenceDirectory(task.id, id).resolve("result.json"), bytes);
         task.checks.add(new TaskRecord.EvidenceRef(id, WorkspaceSnapshot.hash(bytes)));
     }
@@ -219,7 +290,7 @@ public final class TaskStore {
             throws IOException {
         task.agreementHistory.add(new TaskRecord.Agreement(task.acceptanceVersion, task.command,
                 java.util.Map.copyOf(task.acceptanceFiles), List.copyOf(task.checks)));
-        task.schemaVersion = 2;
+        task.schemaVersion = Math.max(2, task.schemaVersion);
         task.command = command;
         task.files = java.util.Map.copyOf(proposal);
         task.acceptanceFiles = TaskProtection.freeze(proposal);

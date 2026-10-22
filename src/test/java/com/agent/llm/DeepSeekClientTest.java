@@ -78,6 +78,14 @@ class DeepSeekClientTest {
     }
 
     @Test
+    void shouldKeepMissingUsageUnknownInsteadOfReportingZero() throws Exception {
+        enqueueJson(200, "{\"choices\":[{\"message\":{\"content\":\"done\"}}]}");
+        LLMResponse response = client().chat(List.of(Message.user("检查")), List.of());
+        assertEquals(-1, response.promptTokens());
+        assertEquals(-1, response.completionTokens());
+    }
+
+    @Test
     void shouldSendBearerAuthAndOpenAiCompatibleBody() throws Exception {
         enqueueJson(200, CONTENT_RESPONSE);
 

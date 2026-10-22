@@ -213,8 +213,12 @@ public class DeepSeekClient implements LLMClient {
         return new LLMResponse(
                 content,
                 toolCalls,
-                usage.path("prompt_tokens").asInt(0),
-                usage.path("completion_tokens").asInt(0));
+                tokenCount(usage.path("prompt_tokens")),
+                tokenCount(usage.path("completion_tokens")));
+    }
+
+    private int tokenCount(JsonNode value) {
+        return value.isIntegralNumber() && value.canConvertToInt() && value.intValue() >= 0 ? value.intValue() : -1;
     }
 
     /** 按状态码给出可诊断的错误信息，并保留响应体（服务端通常会说明具体原因）。 */

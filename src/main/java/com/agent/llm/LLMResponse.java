@@ -10,8 +10,8 @@ import java.util.List;
  *
  * @param content          模型文本内容，可能为空串
  * @param toolCalls        工具调用列表，没有时为 {@code null}
- * @param promptTokens     输入 token 数（供观测与报告记录）
- * @param completionTokens 输出 token 数
+ * @param promptTokens     输入 token 数（供观测与报告记录），-1 表示未提供用量
+ * @param completionTokens 输出 token 数，-1 表示未提供用量
  */
 public record LLMResponse(
         String content,

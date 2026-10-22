@@ -14,7 +14,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,7 +25,10 @@ public final class TaskAcceptance {
     /** 保护校验拒绝执行时 process 为 null，不伪造进程退出状态。 */
     public record Evidence(String kind, String verdict, String reason, String acceptanceVersion,
                            Map<String, String> files, CommandResult process, int tests,
-                           Set<String> identities, Map<String, String> reports, boolean codingAllowed) { }
+                           Set<String> identities, Map<String, String> reports, boolean codingAllowed,
+                           List<String> failures) {
+        public String details() { return failures == null ? "" : String.join("\n", failures); }
+    }
 
     private final Path root;
     private final TaskStore store;
@@ -46,23 +48,24 @@ public final class TaskAcceptance {
         if (!changed.isEmpty()) {
             return recordEvidence(task, id, new Evidence(kind, "FAILED",
                     "验收输入版本已改变，未执行验收命令: " + String.join(", ", changed),
-                    task.acceptanceVersion, before, null, 0, Set.of(), Map.of(), false));
+                    task.acceptanceVersion, before, null, 0, Set.of(), Map.of(), false, List.of()));
         }
         Path evidenceDir = store.evidenceDirectory(task.id, id);
         for (Path report : reports()) {
             Path archived = evidenceDir.resolve("before").resolve(root.relativize(report));
             Files.createDirectories(archived.getParent());
-            Files.move(report, archived, StandardCopyOption.REPLACE_EXISTING);
+            Files.writeString(archived, Redactor.redact(Files.readString(report, StandardCharsets.UTF_8)).text(),
+                    StandardCharsets.UTF_8);
+            Files.delete(report);
         }
         CommandResult process = runner.run(root, task.command, 60);
-        CommandResult redacted = new CommandResult(process.exitCode(), process.timedOut(),
-                Redactor.redact(process.output()).text(), process.durationMillis(), process.outputCompleteness());
         Set<String> identities = new HashSet<>();
         Map<String, String> hashes = new java.util.TreeMap<>();
         String reason = "";
         int tests = 0;
         boolean usableReports = true;
         boolean failedTests = false;
+        List<String> failures = new ArrayList<>();
         for (Path report : reports()) {
             byte[] bytes = Files.readAllBytes(report);
             byte[] persisted = Redactor.redact(new String(bytes, StandardCharsets.UTF_8)).text()
@@ -75,6 +78,7 @@ public final class TaskAcceptance {
                 tests += parsed.tests();
                 usableReports &= !parsed.skipped();
                 failedTests |= parsed.failed();
+                failures.addAll(parsed.failures());
                 if (!parsed.reason().isEmpty()) { reason = parsed.reason(); }
             } catch (InvalidReport invalid) {
                 reason = invalid.getMessage();
@@ -94,7 +98,8 @@ public final class TaskAcceptance {
         boolean codingAllowed = usableReports && tests > 0 && !process.timedOut()
                 && (process.success() || failedTests) && stableInputs && stableAgreement;
         Evidence evidence = new Evidence(kind, reason.isEmpty() ? "PASSED" : "FAILED", reason,
-                task.acceptanceVersion, before, redacted, tests, Set.copyOf(identities), hashes, codingAllowed);
+                task.acceptanceVersion, before, process, tests, Set.copyOf(identities), hashes, codingAllowed,
+                List.copyOf(failures));
         return recordEvidence(task, id, evidence);
     }
 
@@ -125,7 +130,7 @@ public final class TaskAcceptance {
         return reports;
     }
 
-    private record ParsedReport(int tests, String reason, boolean failed, boolean skipped) { }
+    private record ParsedReport(int tests, String reason, boolean failed, boolean skipped, List<String> failures) { }
 
     private ParsedReport parse(byte[] bytes, Set<String> identities) throws InvalidReport {
         try {
@@ -145,6 +150,7 @@ public final class TaskAcceptance {
             if (!suite.getTagName().equals("testsuite")) { throw new InvalidReport("验收报告格式不支持"); }
             var cases = suite.getElementsByTagName("testcase");
             int failures = 0, errors = 0, skipped = 0;
+            List<String> details = new ArrayList<>();
             for (int index = 0; index < cases.getLength(); index++) {
                 Element test = (Element) cases.item(index);
                 String className = test.getAttribute("classname"), name = test.getAttribute("name");
@@ -154,13 +160,21 @@ public final class TaskAcceptance {
                 failures += test.getElementsByTagName("failure").getLength();
                 errors += test.getElementsByTagName("error").getLength();
                 skipped += test.getElementsByTagName("skipped").getLength();
+                for (String tag : List.of("failure", "error")) {
+                    var problems = test.getElementsByTagName(tag);
+                    for (int issue = 0; issue < problems.getLength(); issue++) {
+                        Element problem = (Element) problems.item(issue);
+                        details.add(className + "#" + name + " " + problem.getAttribute("type")
+                                + ": " + problem.getAttribute("message") + "\n" + problem.getTextContent());
+                    }
+                }
             }
             if (count(suite, "tests") != cases.getLength() || count(suite, "failures") != failures
                     || count(suite, "errors") != errors || count(suite, "skipped") != skipped) {
                 throw new InvalidReport("验收报告计数不一致");
             }
             return new ParsedReport(cases.getLength(), failures + errors + skipped > 0
-                    ? "验收存在失败、错误或跳过的测试" : "", failures + errors > 0, skipped > 0);
+                    ? "验收存在失败、错误或跳过的测试" : "", failures + errors > 0, skipped > 0, details);
         } catch (InvalidReport invalid) {
             throw invalid;
         } catch (Exception invalid) {

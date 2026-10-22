@@ -14,6 +14,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MainOptionsTest {
 
     @Test
+    void shouldRequireExplicitMaximumForTaskBudgetIncrease() {
+        var options = Main.Options.parse(new String[]{"--task-budget", "id", "--max-steps", "20"});
+        assertEquals("id", options.budgetTaskId());
+        assertEquals(20, options.maxSteps());
+        for (String[] args : new String[][]{{"--task-budget", "id"}, {"--task-budget"},
+                {"--task-budget", "id", "--max-steps", "20", "--task", "fix"},
+                {"--task-budget", "id", "--max-steps", "20", "--local"},
+                {"--task-budget", "id", "--max-steps"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(args));
+        }
+    }
+
+    @Test
     void shouldUseDefaultsWhenNoArguments() {
         Main.Options options = Main.Options.parse(new String[0]);
 

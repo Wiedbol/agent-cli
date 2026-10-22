@@ -45,10 +45,11 @@ public class Main {
         }
 
         Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
-        if (options.tasks() || options.taskStatus() != null || options.reagreeId() != null) {
+        if (options.tasks() || options.taskStatus() != null || options.reagreeId() != null || options.budgetTaskId() != null) {
             CodingAgentCli query = new CodingAgentCli(root, null, false, options.maxSteps(),
                     ConsoleStreams.newStdinReader(), System.out, System.err);
-            int code = options.reagreeId() != null
+            int code = options.budgetTaskId() != null
+                    ? query.raiseTaskBudget(options.budgetTaskId(), options.maxSteps()) : options.reagreeId() != null
                     ? query.reagreeAcceptance(options.reagreeId(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole())
                     : options.tasks() ? query.listTasks() : query.showTask(options.taskStatus());
             if (code != 0) { System.exit(code); }
@@ -158,7 +159,7 @@ public class Main {
     record Options(String task, boolean autoApprove, boolean local, boolean upperCase,
                    Path root, int maxSteps, String resume, boolean newSession,
                    String sessionName, String sessionDir, String exportId,
-                   boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId) {
+                   boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -176,17 +177,20 @@ public class Main {
             String taskStatus = null;
             String acceptanceCommand = null;
             String reagreeId = null;
+            String budgetTaskId = null;
+            boolean maximumSpecified = false;
 
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
                     String arg = args[i];
                     switch (arg) {
                         case "--tasks" -> tasks = true;
-                        case "--task-status", "--accept-command", "--reagree-acceptance" -> {
+                        case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget" -> {
                             if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
                                 throw new IllegalArgumentException(arg + " 需要非空参数");
                             }
                             if (arg.equals("--task-status")) { taskStatus = args[++i]; }
+                            else if (arg.equals("--task-budget")) { budgetTaskId = args[++i]; }
                             else if (arg.equals("--reagree-acceptance")) { reagreeId = args[++i]; }
                             else { acceptanceCommand = args[++i]; }
                         }
@@ -205,9 +209,9 @@ public class Main {
                             }
                         }
                         case "--max-steps" -> {
-                            if (i + 1 < args.length) {
-                                maxSteps = Integer.parseInt(args[++i]);
-                            }
+                            if (i + 1 >= args.length) { throw new IllegalArgumentException("--max-steps 需要正整数"); }
+                            maxSteps = Integer.parseInt(args[++i]);
+                            maximumSpecified = true;
                         }
                         case "--new" -> newSession = true;
                         case "--resume" -> {
@@ -237,7 +241,7 @@ public class Main {
                 }
             }
             int managedModes = (task == null ? 0 : 1) + (tasks ? 1 : 0) + (taskStatus == null ? 0 : 1)
-                    + (reagreeId == null ? 0 : 1);
+                    + (reagreeId == null ? 0 : 1) + (budgetTaskId == null ? 0 : 1);
             if (managedModes > 1 || managedModes > 0 && (local || resume != null || newSession
                     || sessionName != null || sessionDir != null || exportId != null)) {
                 throw new IllegalArgumentException("管理任务、查询、本地回显和聊天恢复参数不能混用");
@@ -249,8 +253,11 @@ public class Main {
                 throw new IllegalArgumentException("--reagree-acceptance 必须明确提供 --accept-command");
             }
             if (maxSteps <= 0) { throw new IllegalArgumentException("--max-steps 必须为正数"); }
+            if (budgetTaskId != null && !maximumSpecified) {
+                throw new IllegalArgumentException("--task-budget 必须明确提供 --max-steps 新总预算");
+            }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
-                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId);
+                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId);
         }
     }
 
