@@ -99,6 +99,20 @@ public final class ConsoleStreams {
         return new BufferedReader(new InputStreamReader(System.in, stdinCharset()));
     }
 
+    /** 新 JDK 可能为重定向输入提供 Console；反射检查终端属性，同时保留 Java 17 兼容。 */
+    public static boolean hasInteractiveConsole() {
+        java.io.Console console = System.console();
+        if (console == null) { return false; }
+        try {
+            return Boolean.TRUE.equals(java.io.Console.class.getMethod("isTerminal").invoke(console));
+        } catch (NoSuchMethodException olderJdk) {
+            // 没有 isTerminal 的旧 JDK 仅为真实控制台提供非 null Console。
+            return true;
+        } catch (ReflectiveOperationException | SecurityException unavailable) {
+            return false;
+        }
+    }
+
     /**
      * 按环境重建 {@link System#out}（直接写 {@link FileDescriptor#out}，绕开其自带的编码器），
      * 使中文输出在 GBK 控制台与 UTF-8 终端下都能正确显示。

@@ -77,16 +77,14 @@ public final class TaskStore {
 
     public TaskRecord create(String goal, String command) throws IOException {
         TaskRecord task = new TaskRecord();
+        task.schemaVersion = 2;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
         task.command = command;
         task.sessionId = "task-" + task.id;
         task.files = WorkspaceSnapshot.capture(root);
-        task.files.forEach((path, hash) -> {
-            if (path.equals("pom.xml") || path.endsWith("/pom.xml") || path.contains("src/test/")
-                    || path.startsWith(".mvn/")) { task.acceptanceFiles.put(path, hash); }
-        });
+        task.acceptanceFiles = TaskProtection.freeze(task.files);
         task.acceptanceVersion = WorkspaceSnapshot.hash(JSON.writeValueAsBytes(List.of(command, task.acceptanceFiles)));
         save(task);
         return task;
@@ -103,6 +101,10 @@ public final class TaskStore {
         ((com.fasterxml.jackson.databind.node.ObjectNode) persisted).put("goal", Redactor.redact(task.goal).text());
         ((com.fasterxml.jackson.databind.node.ObjectNode) persisted).put("command", Redactor.redact(task.command).text());
         ((com.fasterxml.jackson.databind.node.ObjectNode) persisted).put("reason", Redactor.redact(task.reason).text());
+        for (var agreement : persisted.path("agreementHistory")) {
+            ((com.fasterxml.jackson.databind.node.ObjectNode) agreement).put("command",
+                    Redactor.redact(agreement.path("command").asText()).text());
+        }
         atomicWrite(state, JSON.writeValueAsBytes(persisted));
     }
 
@@ -130,15 +132,23 @@ public final class TaskStore {
             throw new IOException("任务状态缺少必要字段");
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if (task.schemaVersion != 1 || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion != 1 && task.schemaVersion != 2) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
-                || task.sessionId == null || task.acceptanceVersion == null || task.reason == null) {
+                || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
+                || task.agreementHistory == null || task.schemaVersion == 2 && !node.hasNonNull("agreementHistory")) {
             throw new IOException("任务状态损坏或版本不支持");
         }
         if (!root.toString().replace('\\', '/').equals(task.project)) {
             throw new IOException("任务属于其他项目，移动或复制后必须新建任务");
         }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
+        for (TaskRecord.Agreement agreement : task.agreementHistory) {
+            if (agreement == null || agreement.version() == null || agreement.command() == null
+                    || agreement.files() == null || agreement.checks() == null) {
+                throw new IOException("历史验收约定损坏");
+            }
+            for (TaskRecord.EvidenceRef ref : agreement.checks()) { readEvidence(task.id, agreement.version(), ref); }
+        }
         if (task.state == TaskRecord.State.Verified) {
             if (task.checks.size() < 2) { throw new IOException("验证通过任务缺少验收证据"); }
             TaskAcceptance.Evidence finalCheck = readEvidence(task, task.checks.get(task.checks.size() - 1));
@@ -172,16 +182,20 @@ public final class TaskStore {
     }
 
     public TaskAcceptance.Evidence readEvidence(TaskRecord task, TaskRecord.EvidenceRef ref) throws IOException {
+        return readEvidence(task.id, task.acceptanceVersion, ref);
+    }
+
+    private TaskAcceptance.Evidence readEvidence(String taskId, String version, TaskRecord.EvidenceRef ref) throws IOException {
         if (ref == null || ref.id() == null || !ref.id().matches("(baseline|final)-[0-9a-f-]{36}")) {
             throw new IOException("任务证据引用损坏");
         }
-        Path dir = taskDirectory(task.id).resolve(ref.id());
+        Path dir = taskDirectory(taskId).resolve(ref.id());
         Path result = dir.resolve("result.json");
         checkPath(result);
         byte[] bytes = Files.readAllBytes(result);
         if (!WorkspaceSnapshot.hash(bytes).equals(ref.sha256())) { throw new IOException("任务证据校验失败"); }
         TaskAcceptance.Evidence evidence = JSON.readValue(bytes, TaskAcceptance.Evidence.class);
-        if (!task.acceptanceVersion.equals(evidence.acceptanceVersion())) { throw new IOException("验收版本不匹配"); }
+        if (!version.equals(evidence.acceptanceVersion())) { throw new IOException("验收版本不匹配"); }
         for (var report : evidence.reports().entrySet()) {
             Path file = dir.resolve("reports").resolve(report.getKey()).normalize();
             if (!file.startsWith(dir.resolve("reports"))) { throw new IOException("报告引用越界"); }
@@ -191,6 +205,30 @@ public final class TaskStore {
             }
         }
         return evidence;
+    }
+
+    /** 历史通过不能成为当前成功或未来经验保存的凭据。 */
+    public boolean isCurrentVerified(TaskRecord task) throws IOException {
+        TaskRecord current = read(task.id);
+        return current.state == TaskRecord.State.Verified && task.acceptanceVersion.equals(current.acceptanceVersion)
+                && current.files.equals(WorkspaceSnapshot.capture(root))
+                && new TaskProtection(root, current.acceptanceFiles).changes(current.files).isEmpty();
+    }
+
+    public void replaceAgreement(TaskRecord task, String command, java.util.Map<String, String> proposal)
+            throws IOException {
+        task.agreementHistory.add(new TaskRecord.Agreement(task.acceptanceVersion, task.command,
+                java.util.Map.copyOf(task.acceptanceFiles), List.copyOf(task.checks)));
+        task.schemaVersion = 2;
+        task.command = command;
+        task.files = java.util.Map.copyOf(proposal);
+        task.acceptanceFiles = TaskProtection.freeze(proposal);
+        task.acceptanceVersion = WorkspaceSnapshot.hash(JSON.writeValueAsBytes(List.of(
+                UUID.randomUUID().toString(), command, task.acceptanceFiles)));
+        task.checks = new ArrayList<>();
+        task.state = TaskRecord.State.Paused;
+        task.reason = "新验收约定已批准，旧验证已失效；等待初始验收证据";
+        save(task);
     }
 
     public List<TaskRecord> list() throws IOException {

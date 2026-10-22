@@ -21,6 +21,8 @@ public final class TaskRecord {
     public Map<String, String> files = new LinkedHashMap<>();
     public Map<String, String> acceptanceFiles = new LinkedHashMap<>();
     public List<EvidenceRef> checks = new ArrayList<>();
+    public List<Agreement> agreementHistory = new ArrayList<>();
 
     public record EvidenceRef(String id, String sha256) { }
+    public record Agreement(String version, String command, Map<String, String> files, List<EvidenceRef> checks) { }
 }

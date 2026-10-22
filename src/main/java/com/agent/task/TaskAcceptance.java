@@ -23,6 +23,7 @@ import java.util.Set;
 
 /** 验收直接消费当前报告；退出码和模型的输出摘要都不足以证明测试通过。 */
 public final class TaskAcceptance {
+    /** 保护校验拒绝执行时 process 为 null，不伪造进程退出状态。 */
     public record Evidence(String kind, String verdict, String reason, String acceptanceVersion,
                            Map<String, String> files, CommandResult process, int tests,
                            Set<String> identities, Map<String, String> reports, boolean codingAllowed) { }
@@ -40,13 +41,19 @@ public final class TaskAcceptance {
     public Evidence check(TaskRecord task, String kind, Set<String> expected)
             throws IOException, InterruptedException {
         String id = kind + "-" + java.util.UUID.randomUUID();
+        Map<String, String> before = WorkspaceSnapshot.capture(root);
+        List<String> changed = new TaskProtection(root, task.acceptanceFiles).changes(before);
+        if (!changed.isEmpty()) {
+            return recordEvidence(task, id, new Evidence(kind, "FAILED",
+                    "验收输入版本已改变，未执行验收命令: " + String.join(", ", changed),
+                    task.acceptanceVersion, before, null, 0, Set.of(), Map.of(), false));
+        }
         Path evidenceDir = store.evidenceDirectory(task.id, id);
         for (Path report : reports()) {
             Path archived = evidenceDir.resolve("before").resolve(root.relativize(report));
             Files.createDirectories(archived.getParent());
             Files.move(report, archived, StandardCopyOption.REPLACE_EXISTING);
         }
-        Map<String, String> before = WorkspaceSnapshot.capture(root);
         CommandResult process = runner.run(root, task.command, 60);
         CommandResult redacted = new CommandResult(process.exitCode(), process.timedOut(),
                 Redactor.redact(process.output()).text(), process.durationMillis(), process.outputCompleteness());
@@ -80,8 +87,7 @@ public final class TaskAcceptance {
         if (reason.isEmpty() && !identities.containsAll(expected)) { reason = "验收缺少先前测试身份"; }
         boolean stableInputs = before.equals(WorkspaceSnapshot.capture(root));
         if (!stableInputs) { reason = "验收期间项目输入版本发生变化"; }
-        boolean stableAgreement = task.acceptanceFiles.entrySet().stream()
-                .allMatch(entry -> entry.getValue().equals(before.get(entry.getKey())));
+        boolean stableAgreement = new TaskProtection(root, task.acceptanceFiles).changes(before).isEmpty();
         if (!stableAgreement) {
             reason = "验收约定的输入版本已改变，请重新建立任务约定";
         }
@@ -89,8 +95,12 @@ public final class TaskAcceptance {
                 && (process.success() || failedTests) && stableInputs && stableAgreement;
         Evidence evidence = new Evidence(kind, reason.isEmpty() ? "PASSED" : "FAILED", reason,
                 task.acceptanceVersion, before, redacted, tests, Set.copyOf(identities), hashes, codingAllowed);
+        return recordEvidence(task, id, evidence);
+    }
+
+    private Evidence recordEvidence(TaskRecord task, String id, Evidence evidence) throws IOException {
         store.saveEvidence(task, id, evidence);
-        task.files = before;
+        task.files = evidence.files();
         store.save(task);
         return evidence;
     }

@@ -16,6 +16,7 @@ import com.agent.task.TaskRecord;
 import com.agent.task.TaskStore;
 import com.agent.task.TaskAcceptance;
 import com.agent.task.TaskCoordinator;
+import com.agent.task.TaskProtection;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -96,6 +97,12 @@ public class CodingAgentCli {
                           PrintStream err,
                           SessionStore session,
                           CommandRunner commandRunner) {
+        this(root, client, autoApprove, maxSteps, in, out, err, session, commandRunner, null);
+    }
+
+    private CodingAgentCli(Path root, LLMClient client, boolean autoApprove, int maxSteps,
+                           BufferedReader in, PrintStream out, PrintStream err, SessionStore session,
+                           CommandRunner commandRunner, TaskProtection protection) {
         this.root = root.toAbsolutePath().normalize();
         this.out = out;
         this.err = err;
@@ -112,10 +119,11 @@ public class CodingAgentCli {
             return;
         }
         this.registrar = RegistrarRole.standard(this.root, commandRunner);
-        GuardRole guard = new GuardRole(this.root);
+        GuardRole guard = protection == null ? new GuardRole(this.root)
+                : new GuardRole(this.root, protection::isWriteProtected);
         ExecutorRole executor = new ExecutorRole(this.root, ExecutorRole.DEFAULT_MAX_RESULT_CHARS, out);
         this.controller = new ControllerRole(llm, registrar, guard, executor, user, maxSteps, out,
-                recorder(session));
+                recorder(session), protection == null ? () -> { } : protection::check);
     }
 
     private static SessionRecorder recorder(SessionStore session) {
@@ -208,9 +216,9 @@ public class CodingAgentCli {
     public int startManagedTask(String goal, String acceptanceCommand) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
-            TaskRecord task = new TaskCoordinator(root, commandRunner, managedSession ->
+            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
-                            managedSession, commandRunner).controller, out)
+                            managedSession, commandRunner, protection).controller, out)
                     .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
@@ -234,21 +242,38 @@ public class CodingAgentCli {
         catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
     }
 
+    /** 重新约定只记录新基线，不隐式继续编码，也不会恢复旧 Verified。 */
+    public int reagreeAcceptance(String id, String command, boolean interactive) {
+        try {
+            TaskRecord task = new TaskCoordinator(root, commandRunner, null, out)
+                    .reagree(id, command, in, interactive);
+            if (task != null) { printTask(task); }
+            return 1;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt(); err.println("重新约定验收被中断"); return 4;
+        } catch (IOException | java.io.UncheckedIOException failed) {
+            err.println("重新约定失败: " + failed.getMessage()); return 4;
+        }
+    }
+
     private TaskRecord.State printTask(TaskRecord task) throws IOException {
         TaskRecord.State state = task.state;
         String reason = task.reason;
-        if (state == TaskRecord.State.Verified
-                && !task.files.equals(com.agent.task.WorkspaceSnapshot.capture(root.toRealPath()))) {
+        TaskStore store = new TaskStore(root);
+        if (state == TaskRecord.State.Verified && !store.isCurrentVerified(task)) {
             state = TaskRecord.State.Paused;
             reason = "项目输入版本已变化，原验收失效；请新建任务";
         }
         out.println("任务: " + task.id + "\n状态: " + state + "\n目标: " + task.goal
-                + "\n会话: " + task.sessionId + "\n验收: " + task.command + "\n原因: " + reason);
-        TaskStore store = new TaskStore(root);
+                + "\n会话: " + task.sessionId + "\n验收: " + task.command
+                + "\n验收版本: " + task.acceptanceVersion + "\n原因: " + reason);
         for (TaskRecord.EvidenceRef ref : task.checks) {
             TaskAcceptance.Evidence evidence = store.readEvidence(task, ref);
             out.println(evidence.kind() + ": " + evidence.verdict() + "，测试数=" + evidence.tests()
                     + "，原因=" + evidence.reason());
+        }
+        for (TaskRecord.Agreement agreement : task.agreementHistory) {
+            out.println("历史约定: " + agreement.version() + "，仅用于审计，不是当前验收证据");
         }
         return state;
     }

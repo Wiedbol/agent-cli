@@ -44,6 +44,7 @@ public class ControllerRole {
     private final int maxSteps;
     private final PrintStream trace;
     private final SessionRecorder recorder;
+    private final Runnable checkInputs;
 
     public ControllerRole(LlmRole llm, RegistrarRole registrar, GuardRole guard,
                           ExecutorRole executor, UserRole user, int maxSteps, PrintStream trace) {
@@ -54,6 +55,13 @@ public class ControllerRole {
     public ControllerRole(LlmRole llm, RegistrarRole registrar, GuardRole guard,
                           ExecutorRole executor, UserRole user, int maxSteps, PrintStream trace,
                           SessionRecorder recorder) {
+        this(llm, registrar, guard, executor, user, maxSteps, trace, recorder, () -> { });
+    }
+
+    /** 策略由装配点提供，控制员只保证工具执行边界的顺序。 */
+    public ControllerRole(LlmRole llm, RegistrarRole registrar, GuardRole guard,
+                          ExecutorRole executor, UserRole user, int maxSteps, PrintStream trace,
+                          SessionRecorder recorder, Runnable checkInputs) {
         this.llm = llm;
         this.registrar = registrar;
         this.guard = guard;
@@ -62,6 +70,7 @@ public class ControllerRole {
         this.maxSteps = maxSteps;
         this.trace = trace;
         this.recorder = recorder == null ? SessionRecorder.NONE : recorder;
+        this.checkInputs = checkInputs;
     }
 
     /**
@@ -99,8 +108,10 @@ public class ControllerRole {
 
             llm.recordToolCalls(response);
             for (ToolCall call : response.toolCalls()) {
+                checkInputs.run();
                 String observation = dispatch(call);
                 llm.recordToolResult(call, observation);
+                checkInputs.run();
             }
         }
 

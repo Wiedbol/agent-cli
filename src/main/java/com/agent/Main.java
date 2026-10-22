@@ -45,10 +45,12 @@ public class Main {
         }
 
         Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
-        if (options.tasks() || options.taskStatus() != null) {
+        if (options.tasks() || options.taskStatus() != null || options.reagreeId() != null) {
             CodingAgentCli query = new CodingAgentCli(root, null, false, options.maxSteps(),
                     ConsoleStreams.newStdinReader(), System.out, System.err);
-            int code = options.tasks() ? query.listTasks() : query.showTask(options.taskStatus());
+            int code = options.reagreeId() != null
+                    ? query.reagreeAcceptance(options.reagreeId(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole())
+                    : options.tasks() ? query.listTasks() : query.showTask(options.taskStatus());
             if (code != 0) { System.exit(code); }
             return;
         }
@@ -156,7 +158,7 @@ public class Main {
     record Options(String task, boolean autoApprove, boolean local, boolean upperCase,
                    Path root, int maxSteps, String resume, boolean newSession,
                    String sessionName, String sessionDir, String exportId,
-                   boolean tasks, String taskStatus, String acceptanceCommand) {
+                   boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -173,17 +175,19 @@ public class Main {
             boolean tasks = false;
             String taskStatus = null;
             String acceptanceCommand = null;
+            String reagreeId = null;
 
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
                     String arg = args[i];
                     switch (arg) {
                         case "--tasks" -> tasks = true;
-                        case "--task-status", "--accept-command" -> {
+                        case "--task-status", "--accept-command", "--reagree-acceptance" -> {
                             if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
                                 throw new IllegalArgumentException(arg + " 需要非空参数");
                             }
                             if (arg.equals("--task-status")) { taskStatus = args[++i]; }
+                            else if (arg.equals("--reagree-acceptance")) { reagreeId = args[++i]; }
                             else { acceptanceCommand = args[++i]; }
                         }
                         case "--task", "-t" -> {
@@ -232,17 +236,21 @@ public class Main {
                     }
                 }
             }
-            int managedModes = (task == null ? 0 : 1) + (tasks ? 1 : 0) + (taskStatus == null ? 0 : 1);
+            int managedModes = (task == null ? 0 : 1) + (tasks ? 1 : 0) + (taskStatus == null ? 0 : 1)
+                    + (reagreeId == null ? 0 : 1);
             if (managedModes > 1 || managedModes > 0 && (local || resume != null || newSession
                     || sessionName != null || sessionDir != null || exportId != null)) {
                 throw new IllegalArgumentException("管理任务、查询、本地回显和聊天恢复参数不能混用");
             }
-            if (acceptanceCommand != null && task == null) {
-                throw new IllegalArgumentException("--accept-command 必须与 --task 一起使用");
+            if (acceptanceCommand != null && task == null && reagreeId == null) {
+                throw new IllegalArgumentException("--accept-command 必须与 --task 或 --reagree-acceptance 一起使用");
+            }
+            if (reagreeId != null && acceptanceCommand == null) {
+                throw new IllegalArgumentException("--reagree-acceptance 必须明确提供 --accept-command");
             }
             if (maxSteps <= 0) { throw new IllegalArgumentException("--max-steps 必须为正数"); }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
-                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand);
+                    resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId);
         }
     }
 

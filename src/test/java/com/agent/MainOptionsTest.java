@@ -110,4 +110,25 @@ class MainOptionsTest {
                     () -> Main.Options.parse(args));
         }
     }
+
+    @Test
+    void shouldParseExplicitAcceptanceReagreement() {
+        var options = Main.Options.parse(new String[]{"--reagree-acceptance", "task-id",
+                "--accept-command", "mvn -q test", "--yes"});
+        assertEquals("task-id", options.reagreeId());
+        assertEquals("mvn -q test", options.acceptanceCommand());
+        assertTrue(options.autoApprove());
+    }
+
+    @Test
+    void shouldRejectIncompleteOrMixedAcceptanceReagreementModes() {
+        for (String[] args : new String[][]{
+                {"--reagree-acceptance"}, {"--reagree-acceptance", "id"},
+                {"--reagree-acceptance", "id", "--accept-command", "mvn test", "--tasks"},
+                {"--reagree-acceptance", "id", "--accept-command", "mvn test", "--local"},
+                {"--reagree-acceptance", "id", "--accept-command", "mvn test", "--task", "fix"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> Main.Options.parse(args));
+        }
+    }
 }

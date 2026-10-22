@@ -92,9 +92,16 @@ public class GuardRole {
     private static final Pattern SINGLE_LETTER_SWITCH = Pattern.compile("(?i)/[a-z]");
 
     private final Path root;
+    private final java.util.function.Predicate<Path> writeProtected;
 
     public GuardRole(Path root) {
+        this(root, path -> false);
+    }
+
+    /** 任务可追加只读输入策略，普通聊天仍使用原有守卫规则。 */
+    public GuardRole(Path root, java.util.function.Predicate<Path> writeProtected) {
         this.root = root.toAbsolutePath().normalize();
+        this.writeProtected = writeProtected;
     }
 
     public Path root() {
@@ -138,6 +145,9 @@ public class GuardRole {
                 return Decision.deny("路径越出项目根目录: " + raw);
             }
             String relative = root.relativize(resolved).toString().replace('\\', '/');
+            if (tool.risk() == Tool.Risk.WRITE && writeProtected.test(resolved)) {
+                return Decision.deny("任务验收输入或任务元数据受保护，修改需明确重新约定: " + relative);
+            }
             if (tool.risk() != Tool.Risk.READ && isProtected(relative)) {
                 return Decision.deny("受保护路径不允许写入: " + relative);
             }
