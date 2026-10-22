@@ -77,7 +77,7 @@ public final class TaskStore {
 
     public TaskRecord create(String goal, String command) throws IOException {
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 5;
+        task.schemaVersion = 6;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
@@ -189,7 +189,7 @@ public final class TaskStore {
             }
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 5) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 6) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
@@ -253,8 +253,10 @@ public final class TaskStore {
                     throw new IOException("工具操作记录损坏");
                 }
                 if (checkpointed) {
-                    if (operation.attempts < 0 || (operation.status == TaskRecord.OperationState.REQUESTED)
-                            != (operation.attempts == 0)) { throw new IOException("工具尝试计数损坏"); }
+                    if (operation.attempts < 0 || operation.status != TaskRecord.OperationState.CANCELLED
+                            && (operation.status == TaskRecord.OperationState.REQUESTED) != (operation.attempts == 0)) {
+                        throw new IOException("工具尝试计数损坏");
+                    }
                     tools += operation.attempts;
                 } else if (operation.status != TaskRecord.OperationState.REQUESTED) { tools++; }
             }
@@ -264,6 +266,7 @@ public final class TaskStore {
             if (resolution == null || resolution.id == null || resolution.action == null || resolution.target == null
                     || resolution.at <= 0 || resolution.reviewedFiles == null || resolution.expectedFiles == null
                     || resolution.originalProcesses == null
+                    || resolution.cancelledOperations == null
                     || resolution.action == TaskRecord.ResolutionAction.RETRY && (resolution.originalOperation == null || resolution.replacementId == null)) {
                 throw new IOException("人工处置记录损坏");
             }

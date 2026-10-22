@@ -9,8 +9,8 @@ import java.util.Map;
 public final class TaskRecord {
     public enum State { Created, Running, Verifying, Paused, Verified, Abandoned }
     public enum DecisionState { RESERVED, RESPONDED, MODEL_FAILED }
-    public enum OperationState { REQUESTED, RUNNING, SUCCEEDED, FAILED, BLOCKED }
-    public enum ResolutionAction { RETRY, ABANDON }
+    public enum OperationState { REQUESTED, RUNNING, SUCCEEDED, FAILED, BLOCKED, CANCELLED }
+    public enum ResolutionAction { RETRY, ABANDON, REPLAN }
 
     public int schemaVersion = 1;
     public String id;
@@ -41,6 +41,7 @@ public final class TaskRecord {
         public Map<String, String> expectedFiles = new LinkedHashMap<>();
         public Map<String, String> reviewedFiles = new LinkedHashMap<>();
         public List<ProcessRef> originalProcesses = new ArrayList<>();
+        public List<String> cancelledOperations = new ArrayList<>();
     }
 
     public enum Phase { BASELINE, CODING, ACCEPTANCE, COMPLETE }
@@ -56,6 +57,8 @@ public final class TaskRecord {
         public boolean acceptanceProcessed;
         public String acceptanceOperationId;
         public List<ProcessRef> acceptanceProcesses = new ArrayList<>();
+        public String baselineEvidenceId;
+        public String replanContext;
 
         /** 统一清除上一轮验收关联，避免恢复误用旧证据。 */
         public void beginAcceptance(boolean claim) {
@@ -78,6 +81,8 @@ public final class TaskRecord {
             beginAcceptance(false);
             phase = Phase.BASELINE;
             feedback = null;
+            baselineEvidenceId = null;
+            replanContext = null;
         }
     }
 
@@ -127,6 +132,10 @@ public final class TaskRecord {
 
         public String reference(int decisionNumber) {
             return operationId == null ? decisionNumber + ":" + callId : operationId;
+        }
+
+        public boolean finished() {
+            return status == OperationState.SUCCEEDED || status == OperationState.FAILED || status == OperationState.CANCELLED;
         }
     }
 

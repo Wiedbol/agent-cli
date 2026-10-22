@@ -102,17 +102,25 @@ public final class TaskCoordinator {
                     case BASELINE -> {
                         task.state = TaskRecord.State.Verifying;
                         store.save(task);
-                        TaskAcceptance.Evidence baseline = currentAcceptance(store, task, acceptance, "baseline", Set.of());
+                        var expected = task.checkpoint.baselineEvidenceId == null ? Set.<String>of()
+                                : baseline(store, task).identities();
+                        TaskAcceptance.Evidence baseline = currentAcceptance(store, task, acceptance, "baseline", expected);
+                        if (!baseline.identities().containsAll(expected)) {
+                            return pause(store, task, "重新规划基线缺少先前测试身份，不能替换原基线", progress);
+                        }
                         if (!baseline.codingAllowed()) {
                             return pause(store, task, "初始验收证据不可用: " + baseline.reason(), progress);
                         }
                         if (!task.checkpoint.acceptanceProcessed) {
+                            task.checkpoint.baselineEvidenceId = task.checkpoint.acceptanceResult;
                             task.checkpoint.acceptanceProcessed = true;
                             progress.acceptanceChecked(baseline, false);
                         }
                         task.checkpoint.phase = TaskRecord.Phase.CODING;
-                        task.checkpoint.feedback = (task.checkpoint.messages.isEmpty() ? task.goal : "验收已重新约定")
-                                + "\n初始" + feedback(baseline);
+                        task.checkpoint.feedback = (task.checkpoint.messages.isEmpty() ? task.goal : "任务上下文已更新，目标保持原约定")
+                                + "\n初始" + feedback(baseline)
+                                + (task.checkpoint.replanContext == null ? "" : "\n" + task.checkpoint.replanContext);
+                        task.checkpoint.replanContext = null;
                         progress.save();
                     }
                     case CODING -> {
@@ -131,7 +139,7 @@ public final class TaskCoordinator {
                     case ACCEPTANCE -> {
                         task.state = TaskRecord.State.Verifying;
                         store.save(task);
-                        var baseline = store.readEvidence(task, task.checks.get(0));
+                        var baseline = baseline(store, task);
                         var verified = currentAcceptance(store, task, acceptance, "final", baseline.identities());
                         if (!verified.codingAllowed()) { return pause(store, task, verified.reason(), progress); }
                         if (!task.checkpoint.acceptanceProcessed) {
@@ -162,6 +170,13 @@ public final class TaskCoordinator {
             catch (IOException saveFailed) { failed.addSuppressed(saveFailed); }
             throw failed;
         }
+    }
+
+    private TaskAcceptance.Evidence baseline(TaskStore store, TaskRecord task) throws IOException {
+        String id = task.checkpoint.baselineEvidenceId;
+        var reference = id == null ? task.checks.get(0) : task.checks.stream().filter(ref -> ref.id().equals(id))
+                .findFirst().orElseThrow(() -> new IOException("检查点基线证据关联缺失"));
+        return store.readEvidence(task, reference);
     }
 
     private TaskAcceptance.Evidence currentAcceptance(TaskStore store, TaskRecord task, TaskAcceptance acceptance,

@@ -251,6 +251,15 @@ public class CodingAgentCli {
         }
     }
 
+    public int replanTask(String id, boolean interactive) {
+        try {
+            printTask(new com.agent.task.TaskReplan(root, in, out).approve(id, interactive));
+            return 1;
+        } catch (IOException | java.io.UncheckedIOException failed) {
+            err.println("重新规划失败: " + failed.getMessage()); return 4;
+        }
+    }
+
     public int retryUncertainOperation(String id, String operationId, boolean interactive) {
         try {
             printTask(new com.agent.task.TaskResolution(root, in, out).retry(id, operationId, interactive));
@@ -336,6 +345,7 @@ public class CodingAgentCli {
             out.println("人工处置: " + resolution.action + "，目标=" + resolution.target + "，新操作="
                     + resolution.replacementId + "，时间=" + resolution.at
                     + "，旧进程停止确认=" + resolution.stoppedConfirmed
+                    + "，取消旧操作=" + resolution.cancelledOperations
                     + (resolution.originalOperation == null ? "" : "，原操作结果不明"));
         }
         if (task.checkpoint.acceptancePending) {

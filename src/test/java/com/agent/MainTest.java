@@ -20,6 +20,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MainTest {
 
+    @Test void shouldParseExplicitReplanAndRejectMixedModes() {
+        assertEquals("task", Main.Options.parse(new String[]{"--replan-task", "task", "--yes"}).replanTask());
+        for (String[] invalid : new String[][] {
+                {"--replan-task"}, {"--replan-task", "--yes"},
+                {"--replan-task", "task", "--resume-task", "task"},
+                {"--replan-task", "task", "--abandon-task", "task"},
+                {"--replan-task", "task", "--resume", "chat"},
+                {"--replan-task", "task", "--accept-command", "mvn verify"},
+                {"--replan-task", "task", "--max-steps", "20"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(invalid));
+        }
+    }
+
     @Test void shouldParseHumanResolutionModesAndRejectMixedOptions() {
         var retry = Main.Options.parse(new String[]{"--retry-operation", "task", "--operation", "op", "--yes"});
         assertEquals("task", retry.retryTask());

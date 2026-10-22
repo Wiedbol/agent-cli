@@ -81,18 +81,27 @@ public final class TaskProtection {
         return paths.stream().filter(path -> !java.util.Objects.equals(frozen.get(path), current.get(path))).toList();
     }
 
+    public static List<String> fileChanges(Map<String, String> expected, Map<String, String> current) {
+        var paths = new TreeSet<>(expected.keySet());
+        paths.addAll(current.keySet());
+        return paths.stream().filter(path -> !java.util.Objects.equals(expected.get(path), current.get(path)))
+                .map(path -> (expected.containsKey(path) ? current.containsKey(path) ? "修改 " : "删除 " : "新增 ")
+                        + path + " [" + expected.get(path) + " -> " + current.get(path) + "]").toList();
+    }
+
     /** 校验异常必须越过工具 Observation 转换，让协调器停止后续副作用。 */
     public void check() {
         try {
             Map<String, String> current = WorkspaceSnapshot.capture(root);
             List<String> changes = changes(current);
-            if (!changes.isEmpty()) { throw new Violation("任务验收输入已改变: " + String.join(", ", changes)); }
+            if (!changes.isEmpty()) { throw new Violation("任务验收输入已改变: " + String.join(", ", changes)
+                    + (expectedFiles == null ? "" : "；现场变化: " + fileChanges(expectedFiles.get(), current))
+                    + "；请明确重新约定验收，或 --abandon-task 保留文件并放弃"); }
             if (expectedFiles != null) {
                 Map<String, String> expected = expectedFiles.get();
-                var paths = new TreeSet<>(expected.keySet());
-                paths.addAll(current.keySet());
-                var changed = paths.stream().filter(path -> !java.util.Objects.equals(expected.get(path), current.get(path))).toList();
-                if (!changed.isEmpty()) { throw new Violation("文件版本不符合任务记录: " + String.join(", ", changed)); }
+                var changed = fileChanges(expected, current);
+                if (!changed.isEmpty()) { throw new Violation("文件版本不符合任务记录: " + changed
+                        + "；请选择 --replan-task 基于当前文件重新规划，或 --abandon-task 放弃；--yes 不适用"); }
             }
         } catch (IOException failed) { throw new Violation("任务验收输入无法校验: " + failed.getMessage()); }
     }

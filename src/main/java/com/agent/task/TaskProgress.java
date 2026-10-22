@@ -52,7 +52,7 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
                 operationIndex = 0;
                 while (operationIndex < decision.operations.size()) {
                     var op = decision.operations.get(operationIndex);
-                    if (op.status != OperationState.SUCCEEDED && op.status != OperationState.FAILED) { break; }
+                    if (!op.finished()) { break; }
                     operationIndex++;
                 }
                 pending = new LLMResponse(decision.content, decision.operations.stream()

@@ -46,10 +46,11 @@ public class Main {
 
         Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
         if (options.tasks() || options.taskStatus() != null || options.reagreeId() != null || options.budgetTaskId() != null
-                || options.retryTask() != null || options.abandonTask() != null) {
+                || options.retryTask() != null || options.abandonTask() != null || options.replanTask() != null) {
             CodingAgentCli query = new CodingAgentCli(root, null, false, options.maxSteps(),
                     ConsoleStreams.newStdinReader(), System.out, System.err);
-            int code = options.retryTask() != null
+            int code = options.replanTask() != null ? query.replanTask(options.replanTask(), ConsoleStreams.hasInteractiveConsole())
+                    : options.retryTask() != null
                     ? query.retryUncertainOperation(options.retryTask(), options.operation(), ConsoleStreams.hasInteractiveConsole())
                     : options.abandonTask() != null ? query.abandonTask(options.abandonTask(), ConsoleStreams.hasInteractiveConsole())
                     : options.budgetTaskId() != null
@@ -164,7 +165,7 @@ public class Main {
                    Path root, int maxSteps, String resume, boolean newSession,
                    String sessionName, String sessionDir, String exportId,
                    boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId,
-                   String resumeTask, String retryTask, String operation, String abandonTask) {
+                   String resumeTask, String retryTask, String operation, String abandonTask, String replanTask) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -187,6 +188,7 @@ public class Main {
             String retryTask = null;
             String operation = null;
             String abandonTask = null;
+            String replanTask = null;
             boolean maximumSpecified = false;
 
             if (args != null) {
@@ -195,11 +197,12 @@ public class Main {
                     switch (arg) {
                         case "--tasks" -> tasks = true;
                         case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget", "--resume-task",
-                                "--retry-operation", "--operation", "--abandon-task" -> {
+                                "--retry-operation", "--operation", "--abandon-task", "--replan-task" -> {
                             if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
                                 throw new IllegalArgumentException(arg + " 需要非空参数");
                             }
                             if (arg.equals("--task-status")) { taskStatus = args[++i]; }
+                            else if (arg.equals("--replan-task")) { replanTask = args[++i]; }
                             else if (arg.equals("--retry-operation")) { retryTask = args[++i]; }
                             else if (arg.equals("--operation")) { operation = args[++i]; }
                             else if (arg.equals("--abandon-task")) { abandonTask = args[++i]; }
@@ -256,7 +259,7 @@ public class Main {
             }
             int managedModes = (task == null ? 0 : 1) + (tasks ? 1 : 0) + (taskStatus == null ? 0 : 1)
                     + (reagreeId == null ? 0 : 1) + (budgetTaskId == null ? 0 : 1) + (resumeTask == null ? 0 : 1)
-                    + (retryTask == null ? 0 : 1) + (abandonTask == null ? 0 : 1);
+                    + (retryTask == null ? 0 : 1) + (abandonTask == null ? 0 : 1) + (replanTask == null ? 0 : 1);
             if (managedModes > 1 || managedModes > 0 && (local || resume != null || newSession
                     || sessionName != null || sessionDir != null || exportId != null)) {
                 throw new IllegalArgumentException("管理任务、查询、本地回显和聊天恢复参数不能混用");
@@ -277,12 +280,12 @@ public class Main {
             if ((retryTask == null) != (operation == null)) {
                 throw new IllegalArgumentException("--retry-operation 与 --operation 必须一起提供");
             }
-            if ((retryTask != null || abandonTask != null) && maximumSpecified) {
+            if ((retryTask != null || abandonTask != null || replanTask != null) && maximumSpecified) {
                 throw new IllegalArgumentException("人工处置不调整预算；请单独使用 --task-budget");
             }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
                     resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId,
-                    resumeTask, retryTask, operation, abandonTask);
+                    resumeTask, retryTask, operation, abandonTask, replanTask);
         }
     }
 

@@ -53,8 +53,7 @@ final class TaskCheckpoint {
         if (!pending.isEmpty()) {
             if (task.progress.decisions.isEmpty()) { throw new IOException("任务缺少待执行决策"); }
             var last = task.progress.decisions.get(task.progress.decisions.size() - 1);
-            var unfinished = last.operations.stream().filter(op -> op.status != TaskRecord.OperationState.SUCCEEDED
-                    && op.status != TaskRecord.OperationState.FAILED).map(op -> op.callId).toList();
+            var unfinished = last.operations.stream().filter(op -> !op.finished()).map(op -> op.callId).toList();
             if (last.roundFinished || !unfinished.equals(List.copyOf(pending.keySet()))) {
                 throw new IOException("任务工具游标与消息不一致");
             }
@@ -84,8 +83,7 @@ final class TaskCheckpoint {
         for (var decision : task.progress.decisions) {
             for (var operation : decision.operations) {
                 if (!decision.acceptanceVersion.equals(task.acceptanceVersion)
-                        && operation.status != TaskRecord.OperationState.SUCCEEDED
-                        && operation.status != TaskRecord.OperationState.FAILED) {
+                        && !operation.finished()) {
                     throw new TaskProgress.Pause("待执行操作属于旧验收约定，不能继续；需要重新规划");
                 }
                 if (operation.status == TaskRecord.OperationState.RUNNING && !"READ".equals(operation.risk)) {
