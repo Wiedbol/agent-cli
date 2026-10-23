@@ -79,7 +79,7 @@ public final class TaskReplan {
             task.checkpoint.baselineEvidenceId = baseline;
             task.checkpoint.replanContext = context;
             task.files = current;
-            task.schemaVersion = 6;
+            task.schemaVersion = Math.max(task.schemaVersion, 6);
             task.state = TaskRecord.State.Paused;
             task.reason = "已明确批准基于当前文件重新规划；旧成功失效，请 --resume-task 重新验收并继续";
             store.save(task);

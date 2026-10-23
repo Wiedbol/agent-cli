@@ -20,6 +20,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * 从而复现并锁定「中文输入乱码」这一缺陷。
  */
 class MainTest {
+    @Test void shouldKeepExperienceOffOptionExclusiveToNewTasks() {
+        assertTrue(Main.Options.parse(new String[]{"--task", "repair", "--no-experiences"}).noExperiences());
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--resume-task", "id", "--no-experiences"}));
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--experiences", "--no-experiences"}));
+    }
     @org.junit.jupiter.api.Test
     void shouldParseExperienceModesAndRejectMixedWorkflows() {
         assertEquals("task", Main.Options.parse(new String[]{"--extract-experience", "task"}).extractExperience());

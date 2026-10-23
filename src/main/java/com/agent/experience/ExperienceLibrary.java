@@ -148,6 +148,76 @@ public final class ExperienceLibrary {
         }
     }
 
+    /** 检索中的坏记录只排除自身，不应阻断当前任务的独立修复。 */
+    public String adviceFor(String failure, Map<String, String> files, List<String> alreadySelected, PrintStream out) throws IOException {
+        checkPath(directory);
+        if (!Files.isDirectory(directory)) { return ""; }
+        record Match(Experience experience, int score, String reason) { }
+        var matches = new ArrayList<Match>();
+        try (var paths = Files.list(directory)) {
+            for (Path path : paths.filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList()) {
+                try {
+                    var experience = read(path.getFileName().toString().replaceFirst("\\.json$", ""));
+                    if (alreadySelected.contains(experience.id()) || !experience.enabled() || !sourceValid(experience)) { continue; }
+                    var modules = new TreeSet<String>();
+                    experience.repairs().forEach(repair -> repair.changes().keySet().forEach(file -> {
+                        int src = file.indexOf("src/");
+                        if (src >= 0) { modules.add(file.substring(0, src)); }
+                    }));
+                    if (!modules.isEmpty() && modules.stream().noneMatch(module -> files.keySet().stream()
+                            .anyMatch(file -> file.startsWith(module + "src/")))) { continue; }
+                    String context = (failure + " " + String.join(" ", files.keySet())).toLowerCase(Locale.ROOT);
+                    var required = Pattern.compile("(?im)(?:requires|必须存在)\\s*[:：]\\s*([^\\r\\n;；]+)")
+                            .matcher(experience.advice().conditions());
+                    boolean applicable = true;
+                    while (required.find()) {
+                        if (!files.containsKey(required.group(1).trim())) {
+                            applicable = false;
+                        }
+                    }
+                    String natural = experience.advice().conditions().replaceAll(
+                            "(?im)(?:requires|必须存在)\\s*[:：]\\s*[^\\r\\n;；]+", "");
+                    var conditions = terms(natural);
+                    if (!natural.isBlank() && (conditions.isEmpty() || conditions.stream().filter(term -> term.matches("[a-z_].*"))
+                            .anyMatch(term -> !context.contains(term)) || conditions.stream().noneMatch(context::contains))) { applicable = false; }
+                    if (!applicable) { continue; }
+                    var tokens = terms(experience.advice().errorFeatures());
+                    if (tokens.isEmpty()) { continue; }
+                    tokens.retainAll(terms(failure));
+                    String fingerprint = experience.advice().errorFeatures().replaceAll("[\\s:]+", "");
+                    boolean exact = failure.replaceAll("[\\s:]+", "").contains(fingerprint);
+                    if (!exact && tokens.size() < 2) { continue; }
+                    int score = (exact ? 100 : 0) + tokens.size() * 10 + (modules.isEmpty() ? 0 : 1);
+                    matches.add(new Match(experience, score, "错误指纹=" + exact + "；关键词=" + tokens + "；模块=" + modules));
+                } catch (IOException invalid) { /* 损坏或跨项目记录不能作为建议。 */ }
+            }
+        }
+        StringBuilder context = new StringBuilder();
+        var seen = new HashSet<Experience.Advice>();
+        for (var match : matches.stream().sorted(Comparator.comparingInt(Match::score).reversed()
+                .thenComparing(match -> match.experience().id())).filter(match -> seen.add(match.experience().advice())).limit(3).toList()) {
+            var experience = match.experience();
+            alreadySelected.add(experience.id());
+            String entry = "\n参考经验 " + experience.id() + "；来源任务 " + experience.sourceTask()
+                    + "；匹配原因：" + match.reason()
+                    + "\n适用条件：" + experience.advice().conditions() + "\n建议：" + experience.advice().recommendation()
+                    + "\n不适用：" + experience.advice().limitations() + "\n仅供参考，仍须遵守当前目标、守卫和独立验收。";
+            out.println(entry);
+            context.append(entry);
+        }
+        return context.toString();
+    }
+
+    private static Set<String> terms(String text) {
+        var terms = new TreeSet<String>();
+        var matcher = Pattern.compile("[a-zA-Z_][a-zA-Z_0-9.]*|[\\p{IsHan}]{2,}").matcher(text.toLowerCase(Locale.ROOT));
+        while (matcher.find()) {
+            String term = matcher.group();
+            if (term.length() > 2 && !Set.of("test", "tests", "error", "failed", "failure", "expected").contains(term)) { terms.add(term); }
+        }
+        return terms;
+    }
+
     public Experience read(String id) throws IOException {
         Path file = path(id);
         var wrapper = JSON.readTree(Files.readAllBytes(file));

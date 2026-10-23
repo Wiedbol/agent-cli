@@ -115,7 +115,7 @@ public class Main {
         int exitCode = options.extractExperience() != null
                 ? cli.extractExperience(options.extractExperience(), true)
                 : options.resumeTask() != null ? cli.resumeManagedTask(options.resumeTask()) : options.task() != null
-                ? cli.startManagedTask(options.task(), options.acceptanceCommand()) : cli.runRepl();
+                ? cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), !options.noExperiences()) : cli.runRepl();
         if (exitCode != 0) {
             System.exit(exitCode);
         }
@@ -175,7 +175,7 @@ public class Main {
                    String sessionName, String sessionDir, String exportId,
                    boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId,
                    String resumeTask, String retryTask, String operation, String abandonTask, String replanTask,
-                   String extractExperience, boolean experiences, String experience, String disableExperience) {
+                   String extractExperience, boolean experiences, String experience, String disableExperience, boolean noExperiences) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -204,12 +204,14 @@ public class Main {
             String experience = null;
             String disableExperience = null;
             boolean maximumSpecified = false;
+            boolean noExperiences = false;
 
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
                     String arg = args[i];
                     switch (arg) {
                         case "--tasks" -> tasks = true;
+                        case "--no-experiences" -> noExperiences = true;
                         case "--experiences" -> experiences = true;
                         case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget", "--resume-task",
                                 "--retry-operation", "--operation", "--abandon-task", "--replan-task",
@@ -307,10 +309,11 @@ public class Main {
             if ((extractExperience != null || experiences || experience != null || disableExperience != null) && maximumSpecified) {
                 throw new IllegalArgumentException("经验操作不调整任务预算");
             }
+            if (noExperiences && task == null) { throw new IllegalArgumentException("--no-experiences 仅用于新任务；恢复沿用已保存选项"); }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
                     resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId,
                     resumeTask, retryTask, operation, abandonTask, replanTask,
-                    extractExperience, experiences, experience, disableExperience);
+                    extractExperience, experiences, experience, disableExperience, noExperiences);
         }
     }
 

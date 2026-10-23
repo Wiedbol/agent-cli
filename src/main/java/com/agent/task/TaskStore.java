@@ -77,7 +77,7 @@ public final class TaskStore {
 
     public TaskRecord create(String goal, String command) throws IOException {
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 6;
+        task.schemaVersion = 7;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
@@ -189,7 +189,7 @@ public final class TaskStore {
             }
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 6) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 7) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
@@ -208,6 +208,10 @@ public final class TaskStore {
             validateProgress(task, task.schemaVersion >= 4);
         }
         if (task.schemaVersion >= 4) { TaskCheckpoint.validate(task, node.path("checkpoint")); }
+        if (task.experienceFailures == null || task.experienceAdviceIds == null || task.schemaVersion >= 7
+                && (!node.hasNonNull("experiencesEnabled") || !node.hasNonNull("experienceFailures") || !node.hasNonNull("experienceAdviceIds"))) {
+            throw new IOException("任务经验选项或失败指纹记录缺失");
+        }
         if (task.schemaVersion >= 5 && !node.hasNonNull("resolutions")) { throw new IOException("任务缺少人工处置记录"); }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
         for (TaskRecord.Agreement agreement : task.agreementHistory) {

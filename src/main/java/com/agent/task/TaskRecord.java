@@ -21,6 +21,9 @@ public final class TaskRecord {
     public String acceptanceVersion;
     public State state = State.Created;
     public String reason = "";
+    public boolean experiencesEnabled = true;
+    public List<String> experienceFailures = new ArrayList<>();
+    public List<String> experienceAdviceIds = new ArrayList<>();
     public Map<String, String> files = new LinkedHashMap<>();
     public Map<String, String> acceptanceFiles = new LinkedHashMap<>();
     public List<EvidenceRef> checks = new ArrayList<>();

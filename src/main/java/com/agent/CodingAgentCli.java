@@ -219,12 +219,16 @@ public class CodingAgentCli {
     }
 
     public int startManagedTask(String goal, String acceptanceCommand, boolean interactive) {
+        return startManagedTask(goal, acceptanceCommand, interactive, true);
+    }
+
+    public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, boolean experiencesEnabled) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
                             managedSession, managedRunner, protection).controller, out)
-                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive);
+                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive, experiencesEnabled);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); err.println("任务验收被中断"); return 4;

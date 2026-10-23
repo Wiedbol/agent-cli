@@ -45,6 +45,11 @@ public final class TaskCoordinator {
 
     public TaskRecord start(String goal, String command, int maxRequests, boolean interactive)
             throws IOException, InterruptedException {
+        return start(goal, command, maxRequests, interactive, true);
+    }
+
+    public TaskRecord start(String goal, String command, int maxRequests, boolean interactive, boolean experiencesEnabled)
+            throws IOException, InterruptedException {
         Path project = root.toRealPath();
         if (maxRequests <= 0) { throw new IOException("总请求预算必须为正数"); }
         if (goal == null || goal.isBlank() || command == null || command.isBlank()
@@ -57,6 +62,7 @@ public final class TaskCoordinator {
         TaskStore store = new TaskStore(project);
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.create(goal, command);
+            task.experiencesEnabled = experiencesEnabled;
             if (maxRequests > task.progress.maxRequests) {
                 task.progress.budgetChanges.add(new TaskRecord.BudgetChange(task.progress.maxRequests,
                         maxRequests, System.currentTimeMillis()));
@@ -119,6 +125,7 @@ public final class TaskCoordinator {
                         task.checkpoint.phase = TaskRecord.Phase.CODING;
                         task.checkpoint.feedback = (task.checkpoint.messages.isEmpty() ? task.goal : "任务上下文已更新，目标保持原约定")
                                 + "\n初始" + feedback(baseline)
+                                + experienceAdvice(task, baseline)
                                 + (task.checkpoint.replanContext == null ? "" : "\n" + task.checkpoint.replanContext);
                         task.checkpoint.replanContext = null;
                         progress.save();
@@ -153,7 +160,8 @@ public final class TaskCoordinator {
                             progress.save();
                             return task;
                         }
-                        task.checkpoint.feedback = feedback(verified) + "\n请根据真实验收结果继续处理目标，完成后申请重新验收。";
+                        task.checkpoint.feedback = feedback(verified) + experienceAdvice(task, verified)
+                                + "\n请根据真实验收结果继续处理目标，完成后申请重新验收。";
                         task.checkpoint.phase = TaskRecord.Phase.CODING;
                         task.state = TaskRecord.State.Running;
                         progress.save();
@@ -170,6 +178,15 @@ public final class TaskCoordinator {
             catch (IOException saveFailed) { failed.addSuppressed(saveFailed); }
             throw failed;
         }
+    }
+
+    private String experienceAdvice(TaskRecord task, TaskAcceptance.Evidence evidence) {
+        if (!task.experiencesEnabled || !"FAILED".equals(evidence.verdict())) { return ""; }
+        String key = CoreError.key(evidence.details());
+        if (task.experienceFailures.contains(key)) { return ""; }
+        task.experienceFailures.add(key);
+        try { return new com.agent.experience.ExperienceLibrary(root).adviceFor(evidence.details(), evidence.files(), task.experienceAdviceIds, out); }
+        catch (IOException invalid) { out.println("经验不可用，继续独立修复与验收"); return ""; }
     }
 
     private TaskAcceptance.Evidence baseline(TaskStore store, TaskRecord task) throws IOException {

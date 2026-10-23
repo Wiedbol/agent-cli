@@ -17,6 +17,118 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CodingAgentCliExperienceTest {
+    @Test void shouldUpdateAdviceForDistinctFailureWithoutRepeatingOldAdvice() throws Exception {
+        String original = task(false);
+        String first = approve(original);
+        var extraction = new FakeLLMClient(List.of(new LLMResponse(
+                ADVICE.replace("expected fixed", "second failure"), null, 1, 1)));
+        assertEquals(0, cli(extraction, "save " + original + "\n").extractExperience(original, true));
+        Files.writeString(source(), "broken");
+        int[] checks = {0};
+        CommandRunner runner = (dir, command, timeout) -> {
+            var result = acceptance().run(dir, command, timeout);
+            if (++checks[0] > 1) {
+                Path report = root.resolve("target/surefire-reports/TEST-AppTest.xml");
+                Files.writeString(report, Files.readString(report).replace("expected fixed", "second failure"));
+            }
+            return result;
+        };
+        var model = new FakeLLMClient(List.of(new LLMResponse("请验收", null, 1, 1), new LLMResponse("仍请验收", null, 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var facade = new CodingAgentCli(root, model, true, 2, new BufferedReader(new StringReader("")), stream, stream, null, runner);
+        assertEquals(1, facade.startManagedTask("修复", null), text());
+        assertEquals(2, model.callCount());
+        String context = model.requests().get(1).toString();
+        assertTrue(context.contains("second failure"));
+        assertEquals(1, Pattern.compile("参考经验 " + first).matcher(context).results().count());
+        assertEquals(2, Pattern.compile("参考经验 ").matcher(context).results().count());
+        assertTrue(text().contains("状态: Paused"));
+    }
+    @Test void shouldNotTreatMissingFileMentionedInFailureAsSatisfiedPrerequisite() throws Exception {
+        String original = task(false);
+        String advice = ADVICE.replace("App计算边界错误", "requires: missing-module/Only.java");
+        var extraction = new FakeLLMClient(List.of(new LLMResponse(advice, null, 1, 1)));
+        assertEquals(0, cli(extraction, "save " + original + "\n").extractExperience(original, true));
+        Files.writeString(source(), "broken");
+        CommandRunner runner = (dir, command, timeout) -> {
+            var result = acceptance().run(dir, command, timeout);
+            Path report = root.resolve("target/surefire-reports/TEST-AppTest.xml");
+            Files.writeString(report, Files.readString(report).replace("expected fixed", "expected fixed missing-module/Only.java"));
+            return result;
+        };
+        var model = new FakeLLMClient(List.of(new LLMResponse("未修复", null, 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var facade = new CodingAgentCli(root, model, true, 1, new BufferedReader(new StringReader("")), stream, stream, null, runner);
+        assertEquals(1, facade.startManagedTask("修复", null));
+        assertFalse(model.requests().get(0).toString().contains("参考经验 "));
+    }
+    @Test void shouldLimitDeduplicateAndOrderAdviceDeterministically() throws Exception {
+        String original = task(false);
+        for (int i = 0; i < 5; i++) {
+            var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE.replace("检查边界", "方案" + i + "检查边界"), null, 1, 1)));
+            assertEquals(0, cli(model, "save " + original + "\n").extractExperience(original, true));
+        }
+        var duplicate = new FakeLLMClient(List.of(new LLMResponse(ADVICE.replace("检查边界", "方案4检查边界"), null, 1, 1)));
+        assertEquals(0, cli(duplicate, "save " + original + "\n").extractExperience(original, true));
+        Files.writeString(source(), "broken");
+        var first = new FakeLLMClient(List.of(new LLMResponse("未修复", null, 1, 1)));
+        assertEquals(1, cli(first, "").startManagedTask("修复", null));
+        String context = first.requests().get(0).toString();
+        assertEquals(3, Pattern.compile("参考经验 ").matcher(context).results().count());
+        var second = new FakeLLMClient(List.of(new LLMResponse("未修复", null, 1, 1)));
+        assertEquals(1, cli(second, "").startManagedTask("修复", null));
+        var ids1 = Pattern.compile("参考经验 ([0-9a-f-]{36})").matcher(context).results().map(m -> m.group(1)).toList();
+        var ids2 = Pattern.compile("参考经验 ([0-9a-f-]{36})").matcher(second.requests().get(0).toString()).results().map(m -> m.group(1)).toList();
+        assertEquals(ids1, ids2);
+        assertEquals(ids1.stream().sorted().toList(), ids1);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"disabled", "missing-source", "corrupt", "unrelated", "prerequisite"})
+    void shouldExcludeUnusableOrInapplicableAdvice(String reason) throws Exception {
+        String original = task(false);
+        String advice = reason.equals("unrelated") ? ADVICE.replace("AppTest#checks expected fixed", "NetworkTimeout database unavailable")
+                : reason.equals("prerequisite") ? ADVICE.replace("App计算边界错误", "requires: missing-module/src/main/java/Only.java") : ADVICE;
+        var extraction = new FakeLLMClient(List.of(new LLMResponse(advice, null, 1, 1)));
+        assertEquals(0, cli(extraction, "save " + original + "\n").extractExperience(original, true));
+        var library = new com.agent.experience.ExperienceLibrary(root);
+        String experience = library.list().get(0).id();
+        if (reason.equals("disabled")) { assertEquals(0, cli(null, "").disableExperience(experience)); }
+        if (reason.equals("missing-source")) { Files.delete(root.resolve(".agent/tasks/" + original + "/state.json")); }
+        if (reason.equals("corrupt")) { Files.writeString(root.resolve(".agent/experiences/" + experience + ".json"), "{}"); }
+        Files.writeString(source(), "broken");
+        var model = new FakeLLMClient(List.of(new LLMResponse("未修复", null, 1, 1)));
+        assertEquals(1, cli(model, "").startManagedTask("修复", null), text());
+        assertFalse(model.requests().get(0).toString().contains("参考经验 "));
+    }
+
+    @Test void shouldPersistOffChoiceAndNeverInjectOnResume() throws Exception {
+        String original = task(false);
+        approve(original);
+        Files.writeString(source(), "broken");
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("read",
+                new ToolCall.Function("read_file", "{\"path\":\"src/main/java/App.java\"}"))), 1, 1)));
+        output.reset();
+        var limited = new CodingAgentCli(root, model, true, 1, new BufferedReader(new StringReader("")), stream, stream, null, acceptance());
+        assertEquals(1, limited.startManagedTask("修复", null, false, false));
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find());
+        String task = match.group(1);
+        assertFalse(new com.agent.task.TaskStore(root).read(task).experiencesEnabled);
+        assertEquals(0, cli(null, "").raiseTaskBudget(task, 3));
+        var resumed = new FakeLLMClient(List.of(new LLMResponse("未修复", null, 1, 1)));
+        assertEquals(1, cli(resumed, "").resumeManagedTask(task, false));
+        assertFalse(resumed.requests().get(0).toString().contains("参考经验 "));
+    }
+    @Test void shouldIncludeSourcedAdviceInNewFailureContext() throws Exception {
+        String original = task(false);
+        String experience = approve(original);
+        Files.writeString(source(), "broken");
+        var model = new FakeLLMClient(List.of(new LLMResponse("尚未修复", null, 1, 1)));
+        assertEquals(1, cli(model, "").startManagedTask("修复计算", null), text());
+        assertTrue(model.requests().get(0).stream().anyMatch(message -> message.content() != null
+                && message.content().contains(experience) && message.content().contains(original)), text());
+    }
     @TempDir Path root;
     private final ByteArrayOutputStream output = new ByteArrayOutputStream();
     private static final String ADVICE = "{\"conditions\":\"App计算边界错误\",\"errorFeatures\":\"AppTest#checks expected fixed\","
