@@ -1,0 +1,1 @@
+{"httpReadTimeoutSeconds":120,"commandTimeoutSeconds":60,"model":"deepseek-chat","sampling":"provider-default","acceptance":"mvn test","endpoint":"https://api.deepseek.com/chat/completions","requests":12,"simulated":false}

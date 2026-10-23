@@ -1,0 +1,21 @@
+{
+  "experimentCommit": "8cc801e",
+  "extraRetries": 0,
+  "scripts": {
+    "examples/repair-lab/control/summarize.py": "0867bdef6c8cebe1d1674fc09f84bbae4f6eb4ef7538d82b75b20bc0f32795cd",
+    "examples/repair-lab/control/ReplaySelection.java": "a58d15febd6b28290f3074779c2d59220befd070b10450c06ea3532741f60e7d",
+    "examples/repair-lab/control/test_summarize.py": "456429c5234747682c3657b58e961a73c140f0924936621b672429a7ee852755"
+  },
+  "kind": "REAL",
+  "publication": {
+    "config.json": "86390ee49a9625cc5071b0165efe80e8c3a57a0509551a4d02a62ce1c9ecad5e",
+    "evidence-index.json": "ee7dbba860f143b0069b842b32a107d660ddf1e67531abef6a86254e9619e10a",
+    "frozen-advice.json": "0db0059e49854fbb5ab212f6a2901f4ac3b14ff1368fcec09e1468bb8155b792",
+    "README.md": "439a59e3ed481b197cdabd32bd8d493e349209cde0f82a3b654d3d0c17f526c3",
+    "replayed-selection.json": "bc3334b658ebaa76c2a6d930718eea8a36fbe59f5f2e320bafbe52968e543b17",
+    "results.json": "155320fc174b4fc1cae28ebf85da439b5dca3ed9ba96aa1ff5d427eb77416bc7",
+    "source-summary.json": "9b64b3cce60a4876404d008ad2c22fcdd64d845b7b19c133415d63448f5a9fb3",
+    "statistics.json": "deb436d6f0a8917894b184b7baf544553b9550c131cb469749c2e5fc498982db"
+  },
+  "textNormalization": "UTF-8; CRLF to LF before SHA-256; evidence references use original bytes"
+}

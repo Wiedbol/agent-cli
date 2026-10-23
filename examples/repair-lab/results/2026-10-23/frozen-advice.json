@@ -1,0 +1,38 @@
+[
+  {
+    "schemaVersion": 1,
+    "id": "cc9260bf-0cf6-4038-bcc4-0a594bda717a",
+    "advice": {
+      "conditions": "当运费规则要求“满10000分免运费”（即金额达到或超过10000分时运费为0），且现有实现使用严格大于（>）比较导致边界值10000分未豁免时适用。",
+      "errorFeatures": "边界测试在金额恰为10000分时断言运费为0，但实际返回800，说明阈值比较使用了>而非>=，边界值未被包含。",
+      "recommendation": "将阈值判断从 cents > 10000 ? 0 : 800 改为 cents >= 10000 ? 0 : 800，使等于10000分时也免运费；保持既有测试与构建配置不变。",
+      "limitations": "本建议仅针对该边界比较修复，不保证适用于其他金额单位、其他阈值或其他运费规则；未验证修改后全部测试与构建的通用正确性。"
+    },
+    "sourceTask": "bf7ae748-1516-494b-a4f4-58c74e3033fe",
+    "acceptanceVersion": "65a495eba39a1a0fa59052736c3e91aa8d138819d62fbfc05f39878b842c2bc4",
+    "baseline": {
+      "id": "baseline-ef2ecef0-cea1-4b1e-8a39-0816b1ef52ae",
+      "sha256": "e56e25f980c81fe34eac6ebc1fb2f5e43fc0b77e63a66d6067cd0efc25a19c26"
+    },
+    "verification": {
+      "id": "final-bd5d1452-10e5-482f-844f-975110c2b0b8",
+      "sha256": "053d982c2ceb58c612e6bf9603ff8edbc9927ec31f407d4b41852687f4f3f5b7"
+    },
+    "repairs": [
+      {
+        "decision": 3,
+        "operationId": "84a6f332-ffb1-4a49-88d5-8ecbc3031e01",
+        "callId": "call_00_qVtGHKSbvi9aXjT9TLzm3248",
+        "tool": "replace_text",
+        "changes": {
+          "src/main/java/demo/ShopRules.java": {
+            "before": "dc89d67c0384007a87536ff7de920a6332d38dd9755a3bc5b7673ba832335e07",
+            "after": "725ae9446f40dde413f7f3070bfcb11681cfea5759e40433807fb87ea06d391b"
+          }
+        }
+      }
+    ],
+    "confirmedAt": 1792738748852,
+    "enabled": true
+  }
+]

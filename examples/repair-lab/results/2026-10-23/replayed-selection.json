@@ -1,0 +1,163 @@
+[ {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 1,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 2,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 3,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 4,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 5,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 6,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 7,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 8,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 9,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 10,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 11,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 12,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 13,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 14,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 15,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 16,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : true,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 17,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+}, {
+  "enabled" : false,
+  "basis" : "offline replay using persisted user messages and final file paths; not wire capture",
+  "redactedMessages" : false,
+  "order" : 18,
+  "selectedIds" : [ ],
+  "replayedResponses" : 4,
+  "requests" : 4,
+  "stablePaths" : true
+} ]

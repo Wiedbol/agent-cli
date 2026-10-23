@@ -1,0 +1,346 @@
+{
+  "ALL/on": {
+    "n": 9,
+    "verified": 9,
+    "states": {
+      "Verified": 9
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 36,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 41,
+      "mean": 4.555555555555555,
+      "median": 5
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 136244,
+      "mean": 15138.222222222223,
+      "median": 14424
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 4735,
+      "mean": 526.1111111111111,
+      "median": 506
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 190163,
+      "mean": 21129.222222222223,
+      "median": 21221
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "ALL/off": {
+    "n": 9,
+    "verified": 9,
+    "states": {
+      "Verified": 9
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 36,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 41,
+      "mean": 4.555555555555555,
+      "median": 5
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 137445,
+      "mean": 15271.666666666666,
+      "median": 14403
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 4803,
+      "mean": 533.6666666666666,
+      "median": 517
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 187119,
+      "mean": 20791,
+      "median": 20643
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "eval-coupon/on": {
+    "n": 3,
+    "verified": 3,
+    "states": {
+      "Verified": 3
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 12,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 13,
+      "mean": 4.333333333333333,
+      "median": 4
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 42799,
+      "mean": 14266.333333333334,
+      "median": 14123
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 1520,
+      "mean": 506.6666666666667,
+      "median": 478
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 64441,
+      "mean": 21480.333333333332,
+      "median": 21540
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "eval-coupon/off": {
+    "n": 3,
+    "verified": 3,
+    "states": {
+      "Verified": 3
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 12,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 13,
+      "mean": 4.333333333333333,
+      "median": 4
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 43052,
+      "mean": 14350.666666666666,
+      "median": 14129
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 1733,
+      "mean": 577.6666666666666,
+      "median": 604
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 63036,
+      "mean": 21012,
+      "median": 21114
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "eval-stock/on": {
+    "n": 3,
+    "verified": 3,
+    "states": {
+      "Verified": 3
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 12,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 15,
+      "mean": 5,
+      "median": 5
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 50769,
+      "mean": 16923,
+      "median": 14490
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 1606,
+      "mean": 535.3333333333334,
+      "median": 506
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 63863,
+      "mean": 21287.666666666668,
+      "median": 21221
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "eval-stock/off": {
+    "n": 3,
+    "verified": 3,
+    "states": {
+      "Verified": 3
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 12,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 14,
+      "mean": 4.666666666666667,
+      "median": 5
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 42898,
+      "mean": 14299.333333333334,
+      "median": 14358
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 1522,
+      "mean": 507.3333333333333,
+      "median": 515
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 61507,
+      "mean": 20502.333333333332,
+      "median": 20538
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "eval-quantity/on": {
+    "n": 3,
+    "verified": 3,
+    "states": {
+      "Verified": 3
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 12,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 13,
+      "mean": 4.333333333333333,
+      "median": 4
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 42676,
+      "mean": 14225.333333333334,
+      "median": 13988
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 1609,
+      "mean": 536.3333333333334,
+      "median": 558
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 61859,
+      "mean": 20619.666666666668,
+      "median": 20468
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  },
+  "eval-quantity/off": {
+    "n": 3,
+    "verified": 3,
+    "states": {
+      "Verified": 3
+    },
+    "requests": {
+      "unknown": 0,
+      "total": 12,
+      "mean": 4,
+      "median": 4
+    },
+    "tools": {
+      "unknown": 0,
+      "total": 14,
+      "mean": 4.666666666666667,
+      "median": 5
+    },
+    "promptTokens": {
+      "unknown": 0,
+      "total": 51495,
+      "mean": 17165,
+      "median": 14728
+    },
+    "completionTokens": {
+      "unknown": 0,
+      "total": 1548,
+      "mean": 516,
+      "median": 500
+    },
+    "elapsedMillis": {
+      "unknown": 0,
+      "total": 62576,
+      "mean": 20858.666666666668,
+      "median": 20991
+    },
+    "humanInterventions": {
+      "unknown": 0,
+      "total": 0,
+      "mean": 0,
+      "median": 0
+    }
+  }
+}
