@@ -38,3 +38,15 @@ Follow the history's prefixes — `lab03:`, `v4:`, `feat:`, `docs:` — with `-`
 ## Security & Configuration Tips
 
 `DEEPSEEK_API_KEY` lives in `.env`, which is ignored — never commit it. `--yes` skips guard confirmations — use it only for trusted tasks. The guard blocks path escapes, writes to `.env`/`.git`, and destructive commands; sensitive matches are redacted on disk only, so memory keeps the original text. PowerShell scripts must be saved as UTF-8 **with BOM**.
+
+## Agent skills
+
+### Issue tracker
+
+Track issues and published specs in GitHub Issues for `Wiedbol/agent-cli`.
+See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` and `docs/adr/`.
+See `docs/agents/domain.md`.
