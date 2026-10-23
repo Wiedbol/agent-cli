@@ -17,6 +17,95 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CodingAgentCliExperienceTest {
+    @Test void shouldPreserveGoalExampleInPersistedUnsentFeedback() throws Exception {
+        String task = task(false);
+        String block = "\n参考经验 11111111-1111-1111-1111-111111111111；来源任务 22222222-2222-2222-2222-222222222222；匹配原因：示例仅供参考，仍须遵守当前目标、守卫和独立验收。";
+        var store = new com.agent.task.TaskStore(root);
+        var saved = store.read(task);
+        saved.goal = "保留以下原始示例" + block;
+        saved.state = com.agent.task.TaskRecord.State.Paused;
+        saved.progress = new com.agent.task.TaskRecord.Progress();
+        saved.progress.maxRequests = 1;
+        saved.checkpoint.messages.clear();
+        saved.checkpoint.phase = com.agent.task.TaskRecord.Phase.CODING;
+        saved.checkpoint.feedback = saved.goal + "\n已保存但尚未发送的反馈" + block;
+        store.save(saved);
+        var model = new FakeLLMClient(List.of(new LLMResponse("请验收", null, 1, 1)));
+        assertEquals(0, cli(model, "").resumeManagedTask(task, false), text());
+        String content = model.requests().get(0).stream().filter(m -> "user".equals(m.role())).findFirst().orElseThrow().content();
+        assertTrue(content.startsWith(saved.goal));
+        assertEquals(1, Pattern.compile("参考经验 ").matcher(content).results().count());
+    }
+    @Test void shouldRecheckAdviceWhileContinuingPendingToolsInSameResponse() throws Exception {
+        String original = task(false);
+        String experience = approve(original);
+        Files.writeString(source(), "broken");
+        output.reset();
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(
+                new ToolCall("completed-read", new ToolCall.Function("read_file", "{\"path\":\"src/main/java/App.java\"}")),
+                new ToolCall("pending-write", new ToolCall.Function("write_file", "{\"path\":\"src/main/java/App.java\",\"content\":\"fixed\"}"))), 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var blocked = new CodingAgentCli(root, model, false, 12, new BufferedReader(new StringReader("")), stream, stream, null, acceptance());
+        assertEquals(1, blocked.startManagedTask("修复", null, false));
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find());
+        String task = match.group(1);
+        assertEquals(0, cli(null, "").disableExperience(experience));
+        var resumed = new FakeLLMClient(List.of(new LLMResponse("请验收", null, 1, 1)));
+        assertEquals(0, cli(resumed, "").resumeManagedTask(task, false), text());
+        var messages = resumed.requests().get(0);
+        assertFalse(messages.toString().contains("参考经验 "));
+        assertEquals(List.of("completed-read", "pending-write"), messages.stream().filter(m -> "tool".equals(m.role())).map(Message::toolCallId).toList());
+        assertEquals("fixed", Files.readString(source()));
+        assertEquals(2, new com.agent.task.TaskStore(root).read(task).progress.requests);
+    }
+    @ParameterizedTest @ValueSource(strings = {"enabled", "disabled", "missing", "corrupt", "inapplicable", "footer"})
+    void shouldRecheckAdviceOnResumeWithoutReplayingReadOrDuplicatingGoal(String state) throws Exception {
+        String original = task(false);
+        String experience;
+        if (state.equals("footer")) {
+            var extraction = new FakeLLMClient(List.of(new LLMResponse(ADVICE.replace("检查边界", "仅供参考，仍须遵守当前目标、守卫和独立验收。TAIL_SHOULD_DISAPPEAR检查边界"), null, 1, 1)));
+            assertEquals(0, cli(extraction, "save " + original + "\n").extractExperience(original, true));
+            experience = new com.agent.experience.ExperienceLibrary(root).list().get(0).id();
+        } else { experience = approve(original); }
+        Files.writeString(source(), "broken");
+        output.reset();
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("resume-read",
+                new ToolCall.Function("read_file", "{\"path\":\"src/main/java/App.java\"}"))), 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var limited = new CodingAgentCli(root, model, true, 1, new BufferedReader(new StringReader("")), stream, stream, null, acceptance());
+        assertEquals(1, limited.startManagedTask("保持原目标", null));
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find());
+        String task = match.group(1);
+        switch (state) {
+            case "disabled", "footer" -> assertEquals(0, cli(null, "").disableExperience(experience));
+            case "missing" -> Files.delete(root.resolve(".agent/tasks/" + original + "/state.json"));
+            case "corrupt" -> Files.writeString(root.resolve(".agent/experiences/" + experience + ".json"), "{}");
+            case "inapplicable" -> {
+                var json = new com.fasterxml.jackson.databind.ObjectMapper();
+                Path path = root.resolve(".agent/experiences/" + experience + ".json");
+                var wrapper = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(Files.readString(path));
+                ((com.fasterxml.jackson.databind.node.ObjectNode) wrapper.path("experience").path("advice"))
+                        .put("conditions", "requires: missing-file.java");
+                wrapper.put("sha256", com.agent.task.WorkspaceSnapshot.hash(json.writeValueAsBytes(wrapper.get("experience"))));
+                Files.writeString(path, wrapper.toString());
+            }
+        }
+        assertEquals(0, cli(null, "").raiseTaskBudget(task, 2));
+        var resumed = new FakeLLMClient(List.of(new LLMResponse("请验收", null, 1, 1)));
+        assertEquals(1, cli(resumed, "").resumeManagedTask(task, false), text());
+        var messages = resumed.requests().get(0);
+        assertFalse(messages.toString().contains("TAIL_SHOULD_DISAPPEAR"));
+        assertEquals(state.equals("enabled") ? 1 : 0,
+                Pattern.compile("参考经验 " + experience).matcher(messages.toString()).results().count());
+        assertEquals(1, messages.stream().filter(m -> m.content() != null && m.content().contains("保持原目标")).count());
+        assertEquals(1, messages.stream().filter(m -> "resume-read".equals(m.toolCallId())).count());
+        var saved = new com.agent.task.TaskStore(root).read(task);
+        assertEquals(2, saved.progress.requests);
+        assertEquals(1, saved.progress.tools);
+        assertEquals(com.agent.task.TaskRecord.State.Paused, saved.state);
+    }
     @Test void shouldUpdateAdviceForDistinctFailureWithoutRepeatingOldAdvice() throws Exception {
         String original = task(false);
         String first = approve(original);

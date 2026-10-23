@@ -92,6 +92,7 @@ public final class TaskCoordinator {
             TaskProtection protection = new TaskProtection(project, task.acceptanceFiles, () -> task.files);
             protection.check();
             if (task.state == TaskRecord.State.Verified) { return task; }
+            if (resumed) { TaskExperienceContext.refresh(project, store, task, out); }
             Path sessions = SessionPaths.defaultDir(project);
             Files.createDirectories(sessions);
             WorkspaceSnapshot.requireInside(project, sessions);
