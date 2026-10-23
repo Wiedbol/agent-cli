@@ -152,45 +152,56 @@ public final class ExperienceLibrary {
     public String adviceFor(String failure, Map<String, String> files, List<String> alreadySelected, PrintStream out) throws IOException {
         checkPath(directory);
         if (!Files.isDirectory(directory)) { return ""; }
-        record Match(Experience experience, int score, String reason) { }
-        var matches = new ArrayList<Match>();
+        var candidates = new ArrayList<Experience>();
         try (var paths = Files.list(directory)) {
             for (Path path : paths.filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList()) {
                 try {
                     var experience = read(path.getFileName().toString().replaceFirst("\\.json$", ""));
                     if (alreadySelected.contains(experience.id()) || !experience.enabled() || !sourceValid(experience)) { continue; }
-                    var modules = new TreeSet<String>();
-                    experience.repairs().forEach(repair -> repair.changes().keySet().forEach(file -> {
-                        int src = file.indexOf("src/");
-                        if (src >= 0) { modules.add(file.substring(0, src)); }
-                    }));
-                    if (!modules.isEmpty() && modules.stream().noneMatch(module -> files.keySet().stream()
-                            .anyMatch(file -> file.startsWith(module + "src/")))) { continue; }
-                    String context = (failure + " " + String.join(" ", files.keySet())).toLowerCase(Locale.ROOT);
-                    var required = Pattern.compile("(?im)(?:requires|必须存在)\\s*[:：]\\s*([^\\r\\n;；]+)")
-                            .matcher(experience.advice().conditions());
-                    boolean applicable = true;
-                    while (required.find()) {
-                        if (!files.containsKey(required.group(1).trim())) {
-                            applicable = false;
-                        }
-                    }
-                    String natural = experience.advice().conditions().replaceAll(
-                            "(?im)(?:requires|必须存在)\\s*[:：]\\s*[^\\r\\n;；]+", "");
-                    var conditions = terms(natural);
-                    if (!natural.isBlank() && (conditions.isEmpty() || conditions.stream().filter(term -> term.matches("[a-z_].*"))
-                            .anyMatch(term -> !context.contains(term)) || conditions.stream().noneMatch(context::contains))) { applicable = false; }
-                    if (!applicable) { continue; }
-                    var tokens = terms(experience.advice().errorFeatures());
-                    if (tokens.isEmpty()) { continue; }
-                    tokens.retainAll(terms(failure));
-                    String fingerprint = experience.advice().errorFeatures().replaceAll("[\\s:]+", "");
-                    boolean exact = failure.replaceAll("[\\s:]+", "").contains(fingerprint);
-                    if (!exact && tokens.size() < 2) { continue; }
-                    int score = (exact ? 100 : 0) + tokens.size() * 10 + (modules.isEmpty() ? 0 : 1);
-                    matches.add(new Match(experience, score, "错误指纹=" + exact + "；关键词=" + tokens + "；模块=" + modules));
+                    candidates.add(experience);
                 } catch (IOException invalid) { /* 损坏或跨项目记录不能作为建议。 */ }
             }
+        }
+        return adviceFromValidated(candidates, failure, files, alreadySelected, out);
+    }
+
+    /** 可信评测控制层冻结后复用同一选择规则；调用者负责冻结前的来源核验。 */
+    public static String adviceFromValidated(List<Experience> candidates, String failure, Map<String, String> files,
+                                             List<String> alreadySelected, PrintStream out) {
+        record Match(Experience experience, int score, String reason) { }
+        var matches = new ArrayList<Match>();
+        for (var experience : candidates) {
+            if (alreadySelected.contains(experience.id()) || !experience.enabled()) { continue; }
+            var modules = new TreeSet<String>();
+            experience.repairs().forEach(repair -> repair.changes().keySet().forEach(file -> {
+                int src = file.indexOf("src/");
+                if (src >= 0) { modules.add(file.substring(0, src)); }
+            }));
+            if (!modules.isEmpty() && modules.stream().noneMatch(module -> files.keySet().stream()
+                    .anyMatch(file -> file.startsWith(module + "src/")))) { continue; }
+            String context = (failure + " " + String.join(" ", files.keySet())).toLowerCase(Locale.ROOT);
+            var required = Pattern.compile("(?im)(?:requires|必须存在)\\s*[:：]\\s*([^\\r\\n;；]+)")
+                    .matcher(experience.advice().conditions());
+            boolean applicable = true;
+            while (required.find()) {
+                if (!files.containsKey(required.group(1).trim())) {
+                    applicable = false;
+                }
+            }
+            String natural = experience.advice().conditions().replaceAll(
+                    "(?im)(?:requires|必须存在)\\s*[:：]\\s*[^\\r\\n;；]+", "");
+            var conditions = terms(natural);
+            if (!natural.isBlank() && (conditions.isEmpty() || conditions.stream().filter(term -> term.matches("[a-z_].*"))
+                    .anyMatch(term -> !context.contains(term)) || conditions.stream().noneMatch(context::contains))) { applicable = false; }
+            if (!applicable) { continue; }
+            var tokens = terms(experience.advice().errorFeatures());
+            if (tokens.isEmpty()) { continue; }
+            tokens.retainAll(terms(failure));
+            String fingerprint = experience.advice().errorFeatures().replaceAll("[\\s:]+", "");
+            boolean exact = failure.replaceAll("[\\s:]+", "").contains(fingerprint);
+            if (!exact && tokens.size() < 2) { continue; }
+            int score = (exact ? 100 : 0) + tokens.size() * 10 + (modules.isEmpty() ? 0 : 1);
+            matches.add(new Match(experience, score, "错误指纹=" + exact + "；关键词=" + tokens + "；模块=" + modules));
         }
         StringBuilder context = new StringBuilder();
         var seen = new HashSet<Experience.Advice>();

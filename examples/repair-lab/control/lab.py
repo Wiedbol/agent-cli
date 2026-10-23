@@ -125,11 +125,21 @@ def verify():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['init', 'reset', 'reference', 'describe', 'verify'])
+    parser.add_argument('action', choices=['init', 'reset', 'reference', 'describe', 'verify', 'export'])
     parser.add_argument('--workspace')
+    parser.add_argument('--output', help='External initial-input bundle for the evaluation controller')
     parser.add_argument('--scenario', choices=CASES, default='source-shipping')
     args = parser.parse_args()
-    if args.action == 'verify':
+    if args.action == 'export':
+        if not args.output or not Path(args.output).is_absolute():
+            parser.error('--output must be an absolute external path')
+        output = Path(args.output)
+        if output.exists():
+            parser.error('--output must not already exist')
+        bundle = {case: {'goal': CASES[case][0], 'files': {name: data.decode('utf-8')
+                  for name, data in inputs(case).items()}} for case in CASES if case.startswith('eval-')}
+        output.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding='utf-8')
+    elif args.action == 'verify':
         verify()
     elif args.action == 'describe':
         print(json.dumps([metadata(case) for case in CASES], ensure_ascii=False, indent=2))
