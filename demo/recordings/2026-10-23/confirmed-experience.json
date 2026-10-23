@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "7c3688b1-c815-4de0-b7ae-1ca5282f89df",
+  "advice": {
+    "conditions": "当运费规则要求满10000分免运费，且验收测试在金额恰为10000分处断言运费为0时适用；修复基于已核实的文件版本哈希93e4eb6c27299ad0b0d2618f01b77ad6384b210a7f486abec640544027e03fd5。",
+    "errorFeatures": "ShopRules.shipping 使用严格大于比较 cents > 10000，导致金额恰为10000分时不满足免运费条件而返回800；测试 shouldShipFreeAtThreshold 报 AssertionFailedError: expected <0> but was <800>，属于阈值比较符号错误的边界缺陷。",
+    "recommendation": "在目标文件版本上仅将免运费判断由 cents > 10000 ? 0 : 800 精确替换为 cents >= 10000 ? 0 : 800；保持测试、pom 与 human note 注释不变；替换后独立运行 shouldShipFreeAtThreshold 及相关运费测试验收边界行为。",
+    "limitations": "该建议仅适用于本次已核实的具体代码形态与边界失败，不保证对其他运费规则、其他金额单位或其他文件版本同样正确；未验证其他阈值和负数、超大金额等未覆盖场景；不得据此承诺通用正确性或替代完整回归测试。"
+  },
+  "sourceTask": "9150ecb2-e986-4e0c-8b16-ce81c714b2b6",
+  "acceptanceVersion": "370640030ddc59012c9762b538157a24d7b36f50445088e9da85c28056e88886",
+  "baseline": {
+    "id": "baseline-a0f531b0-d806-487d-820d-594c509efce6",
+    "sha256": "926e2d7e34059d9427e70e507523518abf0bb6d15892318077ca7adce623a3fd"
+  },
+  "verification": {
+    "id": "final-9d32852e-bc6c-4273-be6b-f84de9be6f39",
+    "sha256": "8d9a82d3bbf4129206b1c637fc1e70e49db64afb6cfd5e78b2b8a83762c21589"
+  },
+  "repairs": [
+    {
+      "decision": 2,
+      "operationId": "46068906-45f0-4911-88e1-ae4c18626310",
+      "callId": "call_00_i69X0sxNWVFeWJqnK5Kr6361",
+      "tool": "replace_text",
+      "changes": {
+        "src/main/java/demo/ShopRules.java": {
+          "before": "93e4eb6c27299ad0b0d2618f01b77ad6384b210a7f486abec640544027e03fd5",
+          "after": "db5e5904095f7ad08b552730e9a5f9e4da3c513a449ab528d2356250859bcaee"
+        }
+      }
+    }
+  ],
+  "confirmedAt": 1792741022788,
+  "enabled": true
+}

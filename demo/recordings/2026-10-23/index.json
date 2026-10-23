@@ -1,0 +1,218 @@
+{
+  "kind": "REAL terminal recording; not live output or offline simulation",
+  "start": "2026-10-23T15:26:16.515000+08:00",
+  "end": "2026-10-23T15:42:38.014000+08:00",
+  "realSeconds": 981.499,
+  "defaultPlaybackSpeed": 2,
+  "defaultPlaybackSeconds": 490.7495,
+  "eventTiming": "tool receipt timestamps for actual PTY output chunks plus one labelled read-only shell query; not per-character emission",
+  "recordedBeforeFinalCommit": true,
+  "baselineCommit": "e3ecf45",
+  "runtimePhases": [
+    {
+      "name": "agent-cli.jar",
+      "sha256": "7903bfcbe24dec61ef0fe2eacbad54e89f5232962c3159c6e34ec9496e3e5903"
+    },
+    {
+      "name": "agent-cli-version-match.jar",
+      "sha256": "34474376e2e69d1ba6bbb21afe4e173eb0fe16d6935d867e985ad91d1f15cc16"
+    }
+  ],
+  "rawPtyChunksSha256": "11672a992da3587af89f9e846fbb71a8ef84e49abdcef5e11fbc8b2a6159802a",
+  "captureRecovery": "PowerShell transcript omitted native output; recovered actual retained tool chunks; existing truncation and terminal editing artifacts retained; no generated output",
+  "truncatedChunks": 15,
+  "rawTranscriptSha256": "1f14498d72a81fb7da347448cb3b880f7c073db7f79444a88a4bea5274a248a6",
+  "tasks": [
+    {
+      "task": "13dce424-b4f8-4d6a-a847-fd18a3f3d42d",
+      "phase": "experience reuse",
+      "state": "Verified",
+      "usage": {
+        "requests": 3,
+        "tools": 2,
+        "promptTokens": 10388,
+        "completionTokens": 584,
+        "unknownRequests": 0
+      },
+      "experienceAdviceIds": [
+        "7c3688b1-c815-4de0-b7ae-1ca5282f89df"
+      ],
+      "checks": [
+        {
+          "id": "baseline-cd14bbc5-bc11-404f-9a2c-726d25e9ab00",
+          "sha256": "b16e6e6fd5c57cd7a9bc0e40d02c019eced57747cd7d1b2bff3824224ac60c08",
+          "kind": "baseline",
+          "verdict": "FAILED",
+          "tests": 16
+        },
+        {
+          "id": "final-a8073ae4-d634-42f6-81ed-a108f7a939c7",
+          "sha256": "0b721b942100ce08b05eb9d0ad4c27551999ffed91de99472302130fa520de26",
+          "kind": "final",
+          "verdict": "PASSED",
+          "tests": 16
+        }
+      ],
+      "operations": [
+        {
+          "id": "84af9497-ca5f-4d06-bbd4-ef041e0363be",
+          "tool": "read_file",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "08be1fd9-7e13-4ce6-9e04-109f7363778c",
+          "tool": "replace_text",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        }
+      ],
+      "replans": 0
+    },
+    {
+      "task": "9150ecb2-e986-4e0c-8b16-ce81c714b2b6",
+      "phase": "clean experience source",
+      "state": "Verified",
+      "usage": {
+        "requests": 4,
+        "tools": 4,
+        "promptTokens": 13893,
+        "completionTokens": 647,
+        "unknownRequests": 0
+      },
+      "experienceAdviceIds": [],
+      "checks": [
+        {
+          "id": "baseline-a0f531b0-d806-487d-820d-594c509efce6",
+          "sha256": "926e2d7e34059d9427e70e507523518abf0bb6d15892318077ca7adce623a3fd",
+          "kind": "baseline",
+          "verdict": "FAILED",
+          "tests": 16
+        },
+        {
+          "id": "final-7f426c7e-b341-4556-8663-4e6546a601af",
+          "sha256": "b56fc70238b80864b429954cf17b3e5d41ac480c782a057a66f6229f2b6603bd",
+          "kind": "final",
+          "verdict": "PASSED",
+          "tests": 16
+        },
+        {
+          "id": "final-9d32852e-bc6c-4273-be6b-f84de9be6f39",
+          "sha256": "8d9a82d3bbf4129206b1c637fc1e70e49db64afb6cfd5e78b2b8a83762c21589",
+          "kind": "final",
+          "verdict": "PASSED",
+          "tests": 16
+        }
+      ],
+      "operations": [
+        {
+          "id": "3c5f1b40-1971-4c9a-a358-77da9e639b86",
+          "tool": "read_file",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "46068906-45f0-4911-88e1-ae4c18626310",
+          "tool": "replace_text",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "348f212b-f268-47e1-acb5-012504993a73",
+          "tool": "read_file",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "f37c25d7-ad2c-40b4-8038-116ad72c3358",
+          "tool": "run_command",
+          "status": "FAILED",
+          "attempts": 1
+        }
+      ],
+      "replans": 0
+    },
+    {
+      "task": "df8e03a9-2b5e-4473-b007-926bc1d85062",
+      "phase": "recovery/replan",
+      "state": "Verified",
+      "usage": {
+        "requests": 4,
+        "tools": 5,
+        "promptTokens": 19379,
+        "completionTokens": 555,
+        "unknownRequests": 0
+      },
+      "experienceAdviceIds": [],
+      "checks": [
+        {
+          "id": "baseline-d90ad75f-a974-4ffd-bd36-e6c6c8fc8be9",
+          "sha256": "c71b9bb1c0581f14e402342c7fce3a9b3acad753fbd0f272f177d3dfa7da6206",
+          "kind": "baseline",
+          "verdict": "FAILED",
+          "tests": 16
+        },
+        {
+          "id": "baseline-2de9becf-b9fd-4cd1-b4de-97e74a27b230",
+          "sha256": "85d8ea834d128332aacef26eb4edb9ef30b62e195c3113cfce5e903b3960fabe",
+          "kind": "baseline",
+          "verdict": "FAILED",
+          "tests": 16
+        },
+        {
+          "id": "final-7566b655-3add-472a-8903-b56b9da9976a",
+          "sha256": "9dc0ef7fd2d54e910ee880d0473d460c1643e525b01d98da633fd3b2d94665c1",
+          "kind": "final",
+          "verdict": "PASSED",
+          "tests": 16
+        },
+        {
+          "id": "final-adb574b5-cc65-4ccb-8481-8e9d1b8b0b77",
+          "sha256": "da77d122fbd7565b6ef994228e19137bfcdeb9d9064cfea3e1122827bde7508d",
+          "kind": "final",
+          "verdict": "PASSED",
+          "tests": 16
+        }
+      ],
+      "operations": [
+        {
+          "id": "aa64990a-7cff-4e5a-99a4-3ffd2ddf3a33",
+          "tool": "list_files",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "29e6f525-df76-4771-9b6b-a82eececdfcb",
+          "tool": "search_code",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "1548348f-20bf-4919-98f9-7e40f956a98a",
+          "tool": "read_file",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "321a0f2f-dd1b-4621-94cc-cd7a7abc48f2",
+          "tool": "read_file",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        },
+        {
+          "id": "e20f52d7-7601-4af2-bf6d-6eb05eb2e434",
+          "tool": "replace_text",
+          "status": "SUCCEEDED",
+          "attempts": 1
+        }
+      ],
+      "replans": 1
+    }
+  ],
+  "extractionRequests": 1,
+  "extractionTokens": null,
+  "totalRequests": 12,
+  "extraBudgetBeyondAuthorizedMaximum": 0,
+  "knownTaskTokens": 45446,
+  "uiRenderingCheck": "IAB could not reach host localhost; offline JavaScript controls checked; actual browser visual rendering not asserted"
+}

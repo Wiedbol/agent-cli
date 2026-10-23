@@ -73,10 +73,23 @@ public final class ProcessCommandRunner implements CommandRunner {
             if (process != null && process.isAlive()) {
                 killProcessTree(process);
             }
+            deleteOutput(outputFile);
+        }
+    }
+
+    /** 进程退出通知可能先于Windows释放重定向句柄，清理短暂重试且不覆盖原始执行结果。 */
+    private static void deleteOutput(Path outputFile) {
+        for (int attempt = 0; attempt < 10; attempt++) {
             try {
                 Files.deleteIfExists(outputFile);
+                return;
             } catch (IOException stillLocked) {
-                // Windows 子进程可能尚未释放句柄，删除日志失败不能掩盖进程的真实结果。
+                if (attempt == 9) { return; }
+                try { Thread.sleep(20); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
         }
     }

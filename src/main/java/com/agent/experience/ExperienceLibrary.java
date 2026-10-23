@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 /** 先核实执行证据，再请求建议；确认只保存知识，不改变来源任务。 */
 public final class ExperienceLibrary {
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final Pattern FILE_VERSION = Pattern.compile("(?i)(?<![a-f0-9])[a-f0-9]{64}(?![a-f0-9])");
     // 模型建议可能含嵌套JSON；旧会话规则只识别未加引号的赋值，保存经验还需覆盖这种形式。
     private static final Pattern QUOTED_SECRET = Pattern.compile(
             "(?i)[\"'](password|passwd|secret|token|api[_-]?key|apikey|private[_-]?key)[\"']\\s*[:=]\\s*\\S+");
@@ -183,6 +184,11 @@ public final class ExperienceLibrary {
             var required = Pattern.compile("(?im)(?:requires|必须存在)\\s*[:：]\\s*([^\\r\\n;；]+)")
                     .matcher(experience.advice().conditions());
             boolean applicable = true;
+            // 精确版本前提应核对快照，不当作错误文本中的自然语言关键词。
+            var versions = FILE_VERSION.matcher(experience.advice().conditions());
+            while (versions.find()) {
+                if (!files.containsValue(versions.group().toLowerCase(Locale.ROOT))) { applicable = false; }
+            }
             while (required.find()) {
                 if (!files.containsKey(required.group(1).trim())) {
                     applicable = false;
@@ -190,6 +196,7 @@ public final class ExperienceLibrary {
             }
             String natural = experience.advice().conditions().replaceAll(
                     "(?im)(?:requires|必须存在)\\s*[:：]\\s*[^\\r\\n;；]+", "");
+            natural = FILE_VERSION.matcher(natural).replaceAll("");
             var conditions = terms(natural);
             if (!natural.isBlank() && (conditions.isEmpty() || conditions.stream().filter(term -> term.matches("[a-z_].*"))
                     .anyMatch(term -> !context.contains(term)) || conditions.stream().noneMatch(context::contains))) { applicable = false; }
