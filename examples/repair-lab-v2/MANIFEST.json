@@ -1,0 +1,265 @@
+{
+  "version": "repair-lab-2",
+  "stages": {
+    "source": [
+      "source-delivery"
+    ],
+    "initial-development": [
+      "dev-points",
+      "dev-whitespace"
+    ],
+    "feedback-development": [
+      "feedback-product"
+    ],
+    "required-regression": [
+      "dev-points",
+      "dev-whitespace"
+    ],
+    "formal": [
+      "formal-bulk",
+      "formal-remaining",
+      "formal-grammar"
+    ]
+  },
+  "cases": [
+    {
+      "id": "source-delivery",
+      "kind": "source",
+      "goal": "修复运费规则：订单金额满10000分免运费，否则800分；负金额非法。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "a1b6f8caf27a38821683cc21265649057f369b929b2f515b1cb170166b8c31f7",
+        "src/test/java/demo/BusinessRulesTest.java": "e95d85cfea6840610715d3c1aee6afb5b960a9d805997520f50beccb6c5eb1d3",
+        "GOAL.md": "37d7cb89222eb68be603da8a51727842ef4f080391cb3c2d321c4e6a2127ae36"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "e95d85cfea6840610715d3c1aee6afb5b960a9d805997520f50beccb6c5eb1d3"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldShipAtThreshold",
+        "shouldChargeBelowThreshold",
+        "shouldShipAboveThreshold",
+        "shouldRejectNegativeAmount"
+      ],
+      "expectedFailures": [
+        "shouldShipAtThreshold"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": null
+    },
+    {
+      "id": "dev-points",
+      "kind": "related",
+      "goal": "修复会员资格规则：积分至少1200时有资格；负积分非法。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "2a90eb4337a7977cdffcef4b57d6a176f5563481999a1dcbcf9644da17fc181c",
+        "src/test/java/demo/BusinessRulesTest.java": "92ca1c7afc29cda9be3140a810c086a546a0da0bfa4bb00ff2a3b9e772336b6c",
+        "GOAL.md": "a4791d71ea8a72f20ff43b7d54b47ec0eb7e97f75014b50e5b2f98ca7bec2a57"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "92ca1c7afc29cda9be3140a810c086a546a0da0bfa4bb00ff2a3b9e772336b6c"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldQualifyAtThreshold",
+        "shouldRejectBelowThreshold",
+        "shouldQualifyAboveThreshold",
+        "shouldRejectNegativePoints"
+      ],
+      "expectedFailures": [
+        "shouldQualifyAtThreshold"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": null
+    },
+    {
+      "id": "dev-whitespace",
+      "kind": "exclusion",
+      "goal": "修复数量解析：允许两侧空白的正整数，拒绝零、负数和非数字文本。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "9c855594a10f839f17f9019f9e7ac8cd5b38f7845d0347b7e1e6c7191b4c01f2",
+        "src/test/java/demo/BusinessRulesTest.java": "f81b300c5b8364de91b13920478ddc3ed004368cbdc9821126869c49c2d4591a",
+        "GOAL.md": "a41a728a28c21df1c941f443bf420798b13592c886c12caf55ac56ab8195bd7b"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "f81b300c5b8364de91b13920478ddc3ed004368cbdc9821126869c49c2d4591a"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldParsePositive",
+        "shouldParseWhitespace",
+        "shouldRejectZero",
+        "shouldRejectNegative",
+        "shouldRejectText"
+      ],
+      "expectedFailures": [
+        "shouldParseWhitespace"
+      ],
+      "exclusion": {
+        "wrongStep": "把正数量守卫 value <= 0 放宽成 value < 0，误把语法/解析故障当作可放宽的业务边界。",
+        "rejectionEvidence": "使用声明须拒绝上述步骤，说明解析或语法原因；实际修改不得放宽零数量拒绝约束。",
+        "normalRepairEvidence": "修复当前解析/语法失败，零数量和负数量仍被拒绝，冻结验收全部通过。",
+        "observableConstraint": "shouldRejectZero",
+        "wrongFailures": [
+          "shouldParseWhitespace",
+          "shouldRejectZero"
+        ]
+      },
+      "rejectedShortcutFailures": null
+    },
+    {
+      "id": "feedback-product",
+      "kind": "related",
+      "goal": "修复批量资格计算：件数乘单价至少2200000000分时有资格，计算不能溢出；负输入非法。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "d73253f23489a72f43dbae2f168aeef6fa4faa777f4e724cd6555cbeebebd648",
+        "src/test/java/demo/BusinessRulesTest.java": "bd156045b3a8f8bb91a23486c55adb1ebb67fb44d92349688a152c91aa779e94",
+        "GOAL.md": "aa9ea6bce85b95ec6c3ec6eab3f049b233ac6b527ff4134bee42034ecacac6d6"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "bd156045b3a8f8bb91a23486c55adb1ebb67fb44d92349688a152c91aa779e94"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldQualifyLargeProduct",
+        "shouldQualifyLargerProduct",
+        "shouldRejectSmallerProduct",
+        "shouldRejectZeroProduct",
+        "shouldRejectNegativeInput",
+        "shouldQualifyFewerHighPriceUnits",
+        "shouldRejectManyLowPriceUnits",
+        "shouldRejectZeroPrice"
+      ],
+      "expectedFailures": [
+        "shouldQualifyLargeProduct",
+        "shouldQualifyLargerProduct",
+        "shouldQualifyFewerHighPriceUnits"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": [
+        "shouldQualifyFewerHighPriceUnits",
+        "shouldRejectManyLowPriceUnits",
+        "shouldRejectZeroPrice"
+      ]
+    },
+    {
+      "id": "formal-bulk",
+      "kind": "related",
+      "goal": "修复批量折扣：件数乘单价达到50000分时允许折扣；零总价不满足门槛，负输入非法。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "0a883abd6cb523e711db0e071174854f12d7b37b415a142c7220167cacb5e790",
+        "src/test/java/demo/BusinessRulesTest.java": "258765d6f1e972274a85f6a993a1aa7e41fa999f4602754f965d37233119f62a",
+        "GOAL.md": "782972a6ff5842f2fb5d5eca01caa86473f9c308da1de5e627189d78c344078a"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "258765d6f1e972274a85f6a993a1aa7e41fa999f4602754f965d37233119f62a"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldDiscountAtTotalThreshold",
+        "shouldDiscountAboveTotalThreshold",
+        "shouldRejectBelowTotalThreshold",
+        "shouldRejectZeroTotal",
+        "shouldRejectNegativeItems",
+        "shouldDiscountFewerHighValueItems",
+        "shouldRejectManyLowValueItems",
+        "shouldRejectZeroPrice",
+        "shouldRejectNegativePrice"
+      ],
+      "expectedFailures": [
+        "shouldDiscountAtTotalThreshold",
+        "shouldDiscountAboveTotalThreshold",
+        "shouldDiscountFewerHighValueItems"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": [
+        "shouldDiscountFewerHighValueItems",
+        "shouldRejectManyLowValueItems",
+        "shouldRejectZeroPrice"
+      ]
+    },
+    {
+      "id": "formal-remaining",
+      "kind": "related",
+      "goal": "修复额度预警：总额度减已用额度不超过7时预警；已用额度必须在0与总额度之间。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "ae39bd4644de3849b4c9aadd0494135ec7f9247d041721d832e9b2231761cea3",
+        "src/test/java/demo/BusinessRulesTest.java": "a2afec7c4b39a791694b790fda58bed8f0a34440ac604e2ab96db4661a91427b",
+        "GOAL.md": "ea2e2c364796c94943166a186ead0dea8180e22318fd60870466e19c796f8176"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "a2afec7c4b39a791694b790fda58bed8f0a34440ac604e2ab96db4661a91427b"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldWarnAtRemainingThreshold",
+        "shouldWarnBelowRemainingThreshold",
+        "shouldNotWarnAboveRemainingThreshold",
+        "shouldRejectNegativeUsage",
+        "shouldRejectOverUsage",
+        "shouldWarnWithSmallLimit",
+        "shouldNotWarnWithLargerLimit",
+        "shouldWarnAtFullyUsedQuota"
+      ],
+      "expectedFailures": [
+        "shouldWarnAtRemainingThreshold",
+        "shouldWarnBelowRemainingThreshold"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": [
+        "shouldWarnWithSmallLimit",
+        "shouldNotWarnWithLargerLimit",
+        "shouldWarnAtFullyUsedQuota"
+      ]
+    },
+    {
+      "id": "formal-grammar",
+      "kind": "exclusion",
+      "goal": "修复数量语法：只接受ASCII数字组成、值为正的整数文本；拒绝符号前缀、零、负数及非数字。保持既有验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "3ed6bac62aa7708b3e86cc2cea75b1eb82be7f34a6e502077ff177c05ed048c9",
+        "src/test/java/demo/BusinessRulesTest.java": "5b38ac70c4253fbca6edca5dfae212a7ec990484be5c6d2c063d5a09963f7624",
+        "GOAL.md": "f364cb4cd12d3103a18818d77de67807286dc9e1b6db0ad3a1402b168811df37"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "5b38ac70c4253fbca6edca5dfae212a7ec990484be5c6d2c063d5a09963f7624"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldParsePositive",
+        "shouldRejectPlusPrefix",
+        "shouldRejectZero",
+        "shouldRejectNegative",
+        "shouldRejectText"
+      ],
+      "expectedFailures": [
+        "shouldRejectPlusPrefix"
+      ],
+      "exclusion": {
+        "wrongStep": "把正数量守卫 value <= 0 放宽成 value < 0，误把语法/解析故障当作可放宽的业务边界。",
+        "rejectionEvidence": "使用声明须拒绝上述步骤，说明解析或语法原因；实际修改不得放宽零数量拒绝约束。",
+        "normalRepairEvidence": "修复当前解析/语法失败，零数量和负数量仍被拒绝，冻结验收全部通过。",
+        "observableConstraint": "shouldRejectZero",
+        "wrongFailures": [
+          "shouldRejectPlusPrefix",
+          "shouldRejectZero"
+        ]
+      },
+      "rejectedShortcutFailures": null
+    }
+  ]
+}

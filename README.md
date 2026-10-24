@@ -16,6 +16,8 @@
 
 需要可重复的修复练习时，可使用[独立示例项目 Repair Lab](examples/repair-lab/README.md)，其中提供固定测试、外部工作区初始化和本地验证命令。
 
+修复技能闭环使用独立的 [Repair Lab v2](examples/repair-lab-v2/README.md)，区分来源、初始开发、反馈、必要回归及三个正式样例；历史证据和参考答案保存在模型工作根之外，提供离线核验。
+
 比较经验开关的效果时，可使用[隔离评测运行器](examples/repair-lab/EVALUATION.md)，按三场景、两组、三次重复记录十八次运行及各自现场。提供独立离线模拟入口，模拟结果不代表真实模型表现。
 
 课程展示与复核可使用[演示交付包](demo/README.md)，含九分钟脚本、真实终端录制备份、课程报告和离线打包检查；[真实对照结果](examples/repair-lab/results/2026-10-23/README.md)单独说明已观察结果与局限。
