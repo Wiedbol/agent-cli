@@ -19,17 +19,28 @@ public final class SkillStore {
             .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
     private final Path root;
     private final Path directory;
+    private final Path originalProject;
 
     /** 后续发布操作的持久化契约；此处只有读取能力，不提供批准或启用入口。 */
     public record Version(int schemaVersion, String id, String skillId, String project,
                           String candidateId, String candidateSha256, long approvedAt, boolean enabled) { }
 
     public SkillStore(Path root) throws IOException {
+        this(root, null);
+    }
+    static SkillStore archived(Path archive, Path originalProject) throws IOException {
+        if (!archive.isAbsolute() || !archive.normalize().equals(archive.toRealPath()) || Files.isSymbolicLink(archive)) {
+            throw new IOException("来源归档需要规范绝对路径");
+        }
+        return new SkillStore(archive, originalProject.toRealPath());
+    }
+    private SkillStore(Path root, Path originalProject) throws IOException {
         this.root = root.toRealPath();
+        this.originalProject = originalProject;
         directory = this.root.resolve(".agent/skills");
         check(directory);
     }
-    String project() { return root.toString().replace('\\', '/'); }
+    String project() { return (originalProject == null ? root : originalProject).toString().replace('\\', '/'); }
     static void requireId(String id) throws IOException {
         if (id == null || !id.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) {
             throw new IOException("技能标识不合法");
@@ -83,6 +94,10 @@ public final class SkillStore {
                         || !request.has("parent") || !request.has("revisionReason")) {
                     throw new IOException("技能请求状态字段缺失");
                 }
+                if (value.path("schemaVersion").asInt() >= 2 && (!request.path("kind").isTextual()
+                        || !request.has("trialId") || !request.has("taskId") || !request.has("requestSha256") || !request.has("auditSha256"))) {
+                    throw new IOException("试用批次请求字段缺失");
+                }
             }
         }
         return JSON.treeToValue(wrapper.get("value"), type);
@@ -102,6 +117,9 @@ public final class SkillStore {
         atomic(path(group, id, ".json"), JSON.writeValueAsBytes(wrapper));
     }
     private void atomic(Path path, byte[] bytes) throws IOException {
+        if (originalProject != null && !path.getParent().equals(directory.resolve("batches"))) {
+            throw new IOException("来源归档只允许追加受控批次账本，不写知识或任务证据");
+        }
         check(path);
         Files.createDirectories(path.getParent());
         check(path);
@@ -126,7 +144,7 @@ public final class SkillStore {
     }
     public SkillBatch batch(String id) throws IOException {
         var batch = read("batches", id, SkillBatch.class);
-        if (batch.schemaVersion != 1 || !id.equals(batch.id) || !project().equals(batch.project)
+        if ((batch.schemaVersion != 1 && batch.schemaVersion != 2) || !id.equals(batch.id) || !project().equals(batch.project)
                 || batch.limit <= 0 || batch.requests == null || batch.requests.size() > batch.limit) {
             throw new IOException("技能批次记录损坏或不属于本项目");
         }
@@ -143,6 +161,18 @@ public final class SkillStore {
                     || !request.candidateSha256.matches("[a-f0-9]{64}"))) {
                 throw new IOException("技能请求记录不完整");
             }
+            if (request.kind == null || request.kind == SkillBatch.Kind.GENERATION
+                    && (request.trialId != null || request.taskId != null || request.requestSha256 != null || request.auditSha256 != null)) {
+                throw new IOException("请求类型与试用引用不一致");
+            }
+            if (request.kind == SkillBatch.Kind.TRIAL) {
+                requireId(request.trialId);
+                requireId(request.taskId);
+                if (batch.schemaVersion < 2 || request.requestSha256 == null || !request.requestSha256.matches("[a-f0-9]{64}")
+                        || request.auditSha256 == null || !request.auditSha256.matches("[a-f0-9]{64}")) {
+                    throw new IOException("试用请求记录损坏");
+                }
+            }
             for (var source : request.sources) {
                 if (source == null || source.experience() == null || source.sha256() == null
                         || !digest(source.experience()).equals(source.sha256())
@@ -155,7 +185,7 @@ public final class SkillStore {
         if (ids == null || ids.isEmpty() || ids.size() > 10 || new HashSet<>(ids).size() != ids.size()) {
             throw new IOException("需要一至十条不重复的来源经验");
         }
-        var library = new ExperienceLibrary(root);
+        var library = originalProject == null ? new ExperienceLibrary(root) : ExperienceLibrary.readOnlyArchive(root, originalProject);
         var result = new ArrayList<SkillCandidate.Source>();
         for (String id : ids.stream().sorted().toList()) {
             var experience = library.read(id);
@@ -172,6 +202,7 @@ public final class SkillStore {
         }
         requireId(candidate.skillId());
         validateGuide(candidate.guide());
+        if (candidate.sources().stream().anyMatch(s -> s == null || s.experience() == null)) { throw new IOException("候选来源引用缺失"); }
         if (!candidate.sources().equals(sources(candidate.sources().stream().map(s -> s.experience().id()).toList()))) {
             throw new IOException("候选来源摘要已改变");
         }

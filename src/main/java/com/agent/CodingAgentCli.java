@@ -104,6 +104,12 @@ public class CodingAgentCli {
     private CodingAgentCli(Path root, LLMClient client, boolean autoApprove, int maxSteps,
                            BufferedReader in, PrintStream out, PrintStream err, SessionStore session,
                            CommandRunner commandRunner, TaskProtection protection) {
+        this(root, client, autoApprove, maxSteps, in, out, err, session, commandRunner, protection, null);
+    }
+
+    private CodingAgentCli(Path root, LLMClient client, boolean autoApprove, int maxSteps,
+                           BufferedReader in, PrintStream out, PrintStream err, SessionStore session,
+                           CommandRunner commandRunner, TaskProtection protection, com.agent.skill.SkillKnowledge knowledge) {
         this.root = root.toAbsolutePath().normalize();
         this.out = out;
         this.err = err;
@@ -121,11 +127,12 @@ public class CodingAgentCli {
         }
         this.registrar = protection == null ? RegistrarRole.standard(this.root, commandRunner)
                 : RegistrarRole.standard(this.root, commandRunner, protection::checkFileVersion, protection::isReadable);
+        if (knowledge != null) { knowledge.tools().forEach(registrar::register); }
         GuardRole guard = protection == null ? new GuardRole(this.root)
-                : new GuardRole(this.root, protection::isWriteProtected);
-        ExecutorRole executor = new ExecutorRole(this.root, ExecutorRole.DEFAULT_MAX_RESULT_CHARS, out);
+                : new GuardRole(this.root, path -> protection.isWriteProtected(path) || knowledge != null && knowledge.isProtected(path));
+        ExecutorRole executor = new ExecutorRole(this.root, knowledge == null ? ExecutorRole.DEFAULT_MAX_RESULT_CHARS : 32000, out);
         this.controller = new ControllerRole(llm, registrar, guard, executor, user, maxSteps, out,
-                recorder(session), protection == null ? () -> { } : protection::check);
+                recorder(session), () -> { if (protection != null) { protection.check(); } if (knowledge != null) { knowledge.check(); } });
     }
 
     private static SessionRecorder recorder(SessionStore session) {
@@ -229,12 +236,17 @@ public class CodingAgentCli {
     }
 
     public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, KnowledgeMode knowledgeMode) {
+        return startManagedTask(goal, acceptanceCommand, interactive, knowledgeMode, null);
+    }
+
+    public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, KnowledgeMode knowledgeMode,
+                                com.agent.skill.SkillKnowledge knowledge) {
         if (knowledgeMode == null) { err.println("任务需要明确的知识模式"); return 2; }
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
-                            managedSession, managedRunner, protection).controller, out)
+                            managedSession, managedRunner, protection, knowledge).controller, out, knowledge)
                     .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive, knowledgeMode);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
@@ -253,6 +265,18 @@ public class CodingAgentCli {
         } catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
     }
 
+    public int startSkillTrial(com.agent.skill.SkillTrials.Config config) {
+        try { return new com.agent.skill.SkillTrials(root, out).start(config, client, commandRunner); }
+        catch (IOException | java.io.UncheckedIOException failed) { err.println("技能试用失败: " + failed.getMessage()); return 4; }
+    }
+    public int showSkillTrial(Path control, String id) {
+        try { new com.agent.skill.SkillTrials(root, out).show(control, id); return 0; }
+        catch (IOException failed) { err.println("试用查询失败: " + failed.getMessage()); return 4; }
+    }
+    public int listSkillTrials(Path control) {
+        try { new com.agent.skill.SkillTrials(root, out).list(control); return 0; }
+        catch (IOException failed) { err.println("试用查询失败: " + failed.getMessage()); return 4; }
+    }
     public int startSkillBatch(int limit) { return skillOperation(skills -> skills.startBatch(limit)); }
     public int generateSkillCandidate(String batch, java.util.List<String> sources, String parent, String reason) {
         try { return new com.agent.skill.SkillCandidates(root, out).generate(batch, sources, parent, reason, client) ? 0 : 1; }

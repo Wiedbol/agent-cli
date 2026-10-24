@@ -12,7 +12,9 @@ public final class SkillBatch {
     public List<Request> requests = new ArrayList<>();
 
     public enum State { RESERVED, RESPONDED, FAILED, COMPLETED }
+    public enum Kind { GENERATION, TRIAL }
     public static final class Request {
+        public Kind kind = Kind.GENERATION;
         public String id;
         public String candidateId;
         public String candidateSha256;
@@ -24,5 +26,9 @@ public final class SkillBatch {
         public Integer promptTokens;
         public Integer completionTokens;
         public String failure;
+        public String trialId;
+        public String taskId;
+        public String requestSha256;
+        public String auditSha256;
     }
 }

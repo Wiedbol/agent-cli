@@ -69,6 +69,8 @@ public class ExecutorRole {
             return operation.run();
         } catch (com.agent.command.CommandRunner.TrackingFailure trackingFailed) {
             throw trackingFailed;
+        } catch (com.agent.task.TaskProgress.Pause stopped) {
+            throw stopped;
         } catch (Exception failed) {
             long elapsed = elapsedMillis(start);
             String message = describe(failed);

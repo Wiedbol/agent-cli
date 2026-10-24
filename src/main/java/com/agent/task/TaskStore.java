@@ -21,9 +21,25 @@ public final class TaskStore {
     private static final ObjectMapper JSON = new ObjectMapper();
     private final Path root;
     private final Path directory;
+    private final String projectIdentity;
+    private final boolean readOnly;
 
     public TaskStore(Path root) throws IOException {
+        this(root, null);
+    }
+
+    /** 可信控制层先核对归档标记，再用原项目身份只读验证历史证据；不能借此迁移执行任务。 */
+    public static TaskStore readOnlyArchive(Path archive, Path originalProject) throws IOException {
+        if (!archive.isAbsolute() || !archive.normalize().equals(archive.toRealPath()) || Files.isSymbolicLink(archive)) {
+            throw new IOException("来源归档需要规范绝对路径");
+        }
+        return new TaskStore(archive, originalProject.toRealPath());
+    }
+
+    private TaskStore(Path root, Path originalProject) throws IOException {
         this.root = root.toRealPath();
+        this.projectIdentity = (originalProject == null ? this.root : originalProject).toString().replace('\\', '/');
+        this.readOnly = originalProject != null;
         this.directory = this.root.resolve(".agent/tasks");
         checkPath(directory);
     }
@@ -40,6 +56,7 @@ public final class TaskStore {
     }
 
     public Writer lock() throws IOException {
+        requireWritable();
         checkPath(directory);
         Files.createDirectories(directory);
         checkPath(directory.resolve("writer.lock"));
@@ -81,8 +98,14 @@ public final class TaskStore {
 
     /** 首次检查点就保存用户选择，避免中断后把技能任务当作默认经验任务。 */
     public TaskRecord create(String goal, String command, KnowledgeMode knowledgeMode) throws IOException {
+        return create(goal, command, knowledgeMode, null);
+    }
+
+    public TaskRecord create(String goal, String command, KnowledgeMode knowledgeMode, String skillTrialId) throws IOException {
+        requireWritable();
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 8;
+        task.schemaVersion = 9;
+        task.skillTrialId = skillTrialId;
         task.knowledgeMode = java.util.Objects.requireNonNull(knowledgeMode, "knowledgeMode");
         task.experiencesEnabled = knowledgeMode == KnowledgeMode.EXPERIENCE;
         task.id = UUID.randomUUID().toString();
@@ -98,6 +121,7 @@ public final class TaskStore {
     }
 
     public void save(TaskRecord task) throws IOException {
+        requireWritable();
         Path dir = taskDirectory(task.id);
         Files.createDirectories(dir);
         Path state = dir.resolve("state.json");
@@ -166,6 +190,7 @@ public final class TaskStore {
     }
 
     private void atomicWrite(Path path, byte[] bytes) throws IOException {
+        requireWritable();
         checkPath(path);
         Path temporary = Files.createTempFile(path.getParent(), "snapshot-", ".tmp");
         try {
@@ -200,14 +225,14 @@ public final class TaskStore {
             throw new IOException("任务知识模式记录缺失或类型不合法");
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 8) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 9) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
                 || task.progress == null || task.schemaVersion >= 3 && !node.hasNonNull("progress")) {
             throw new IOException("任务状态损坏或版本不支持");
         }
-        if (!root.toString().replace('\\', '/').equals(task.project)) {
+        if (!projectIdentity.equals(task.project)) {
             throw new IOException("任务属于其他项目，移动或复制后必须新建任务");
         }
         if (task.schemaVersion >= 3) {
@@ -227,6 +252,13 @@ public final class TaskStore {
             task.knowledgeMode = task.experiencesEnabled ? KnowledgeMode.EXPERIENCE : KnowledgeMode.NONE;
         } else if (task.knowledgeMode == null || task.experiencesEnabled != (task.knowledgeMode == KnowledgeMode.EXPERIENCE)) {
             throw new IOException("任务知识模式与经验开关记录不一致");
+        }
+        if (task.schemaVersion >= 9 && (!node.has("skillTrialId")
+                || !node.path("skillTrialId").isNull() && !node.path("skillTrialId").isTextual())
+                || task.schemaVersion < 9 && task.skillTrialId != null
+                || task.skillTrialId != null && (!task.skillTrialId.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+                || task.knowledgeMode != KnowledgeMode.SKILL)) {
+            throw new IOException("任务试用引用损坏");
         }
         if (task.schemaVersion >= 5 && !node.hasNonNull("resolutions")) { throw new IOException("任务缺少人工处置记录"); }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
@@ -300,11 +332,16 @@ public final class TaskStore {
     }
 
     public Path evidenceDirectory(String taskId, String checkId) throws IOException {
+        requireWritable();
         if (!checkId.matches("(baseline|final)-[0-9a-f-]{36}")) { throw new IOException("证据标识不合法"); }
         Path dir = taskDirectory(taskId).resolve(checkId);
         checkPath(dir);
         Files.createDirectories(dir);
         return dir;
+    }
+
+    private void requireWritable() throws IOException {
+        if (readOnly) { throw new IOException("来源归档仅允许只读核验"); }
     }
 
     public void writeEvidenceFile(String taskId, String checkId, String relative, byte[] bytes) throws IOException {

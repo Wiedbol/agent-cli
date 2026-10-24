@@ -27,7 +27,7 @@ public final class SkillCandidates {
             batch.project = store.project();
             batch.limit = limit;
             store.write("batches", batch.id, batch);
-            printBatch(batch);
+            printBatch(batch, out);
         }
     }
     public boolean generate(String batchId, List<String> sourceIds, String parentId, String reason, LLMClient model)
@@ -38,7 +38,7 @@ public final class SkillCandidates {
         }
         try (var lock = new TaskStore(root).lock()) {
             var batch = store.batch(batchId);
-            if (batch.requests.size() >= batch.limit) { printBatch(batch); out.println("批次额度耗尽，已暂停；不自动扩额或重试"); return false; }
+            if (batch.requests.size() >= batch.limit) { printBatch(batch, out); out.println("批次额度耗尽，已暂停；不自动扩额或重试"); return false; }
             var sources = store.sources(sourceIds);
             var parent = parentId == null ? null : store.parent(parentId);
             String parentText = parent == null ? "新增技能" : "修订父版本 " + parentId + "；原因 " + reason;
@@ -83,7 +83,7 @@ public final class SkillCandidates {
                 request.state = SkillBatch.State.COMPLETED;
                 store.write("batches", batch.id, batch);
                 showCandidate(candidate.id());
-                printBatch(batch);
+                printBatch(batch, out);
                 return true;
             } catch (IOException failed) {
                 request.state = SkillBatch.State.FAILED;
@@ -110,13 +110,13 @@ public final class SkillCandidates {
         if (ids.isEmpty()) { out.println("暂无技能候选。"); }
         for (String id : ids) { showCandidate(id); }
     }
-    public void showBatch(String id) throws IOException { printBatch(store.batch(id)); }
+    public void showBatch(String id) throws IOException { printBatch(store.batch(id), out); }
     public void listBatches() throws IOException {
         var ids = store.ids("batches");
         if (ids.isEmpty()) { out.println("暂无技能批次。"); }
         for (String id : ids) { showBatch(id); }
     }
-    private void printBatch(SkillBatch batch) {
+    static void printBatch(SkillBatch batch, PrintStream out) {
         out.println("技能批次: " + batch.id + "\n累计请求: " + batch.requests.size() + "/" + batch.limit
                 + "\n状态: " + (batch.requests.size() >= batch.limit ? "额度耗尽，暂停" : "可显式生成")
                 + "\n已知输入 token: " + batch.requests.stream().filter(r -> r.promptTokens != null).mapToLong(r -> r.promptTokens).sum()
@@ -125,7 +125,7 @@ public final class SkillCandidates {
                 + "\n输出用量未知请求: " + batch.requests.stream().filter(r -> r.completionTokens == null).count());
         for (var request : batch.requests) {
             out.println("请求: " + request.id + "；状态: " + request.state + "；候选: " + request.candidateId
-                    + "；目标: " + (request.parent == null ? "新增" : request.parent)
+                    + "；目标: " + (request.trialId != null ? "试用 " + request.trialId : request.parent == null ? "新增" : request.parent)
                     + "；来源: " + request.sources.stream().map(s -> s.experience().id() + "@" + s.sha256()).toList()
                     + "；修订原因: " + request.revisionReason + "；" + request.failure);
         }

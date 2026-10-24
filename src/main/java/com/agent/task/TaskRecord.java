@@ -23,6 +23,7 @@ public final class TaskRecord {
     public String reason = "";
     public boolean experiencesEnabled = true;
     public KnowledgeMode knowledgeMode = KnowledgeMode.EXPERIENCE;
+    public String skillTrialId;
     public List<String> experienceFailures = new ArrayList<>();
     public List<String> experienceAdviceIds = new ArrayList<>();
     public Map<String, String> files = new LinkedHashMap<>();

@@ -132,6 +132,36 @@ java -jar $agentJar --root $projectRoot --skill-batches
 
 生成时可同时加 `--revise-skill '已发布版本ID' --revision-reason '修订原因'`，绑定同项目可用父版本和原内容摘要；缺少已发布版本时拒绝生成。发布、试用和批准入口由后续功能交付，当前候选不能启用；`--yes` 不适用于技能命令。
 
+### 指定候选的隔离开发试用
+
+候选只在显式试用中可加载，不对普通 SKILL 任务启用。先在 [Lab v2](examples/repair-lab-v2/README.md) 来源阶段完成修复、确认经验、生成候选和有剩余额度的批次，再用控制器 `reset` 准备开发样例。来源现场连同候选、其他知识及旧批次账本被保存在控制根的 `history/<ID>/workspace`；当前工作根保持干净。
+
+以下是操作者显式启动入口，生成和试用的模型请求均需要事先批准对应批次额度；本仓库离线测试使用替身：
+
+```powershell
+java -jar $agentJar --root E:/repair-v2-work `
+  --trial-skill '候选ID' --skill-batch '来源批次ID' `
+  --trial-control E:/repair-v2-control `
+  --trial-source 'E:/repair-v2-control/history/来源归档ID/workspace' `
+  --trial-catalog E:/agent-cli/examples/repair-lab-v2/MANIFEST.json `
+  --trial-max-steps 4
+
+java -jar $agentJar --root E:/repair-v2-work --skill-trials --trial-control E:/repair-v2-control
+java -jar $agentJar --root E:/repair-v2-work --skill-trial '试用ID' --trial-control E:/repair-v2-control
+```
+
+路径须规范、绝对且相互隔离。只接受冻结清单中的初始开发、反馈开发或必要回归输入，拒绝正式场景、旧 `.agent`、构建产物、输入变动或不足的批次额度。归档核验沿原项目身份检查真实任务、失败、修复意图/结果、文件版本链和验收，不能仅凭有效标志加载知识。来源归档的任务/经验视图禁止写入；只有可信控制层可追加批次账本。
+
+独立失败基线可用后，指定候选的精简目录进入原任务反馈。Agent 可不选，或调用 `load_skill`，用目录中的 ID 与完整 SHA-256 快照版本取得完整流程；错误 ID/版本、任意路径、重复全文加载被拒绝或去重。读取后可用 `declare_skill` 声明 ACCEPT/REJECT 和原因；未读取、读取但未声明、声明采纳、声明拒绝分别记录。模型声明不能代替实际操作或独立验收。
+
+试用沿用现有守卫、文件工具和独立验收，只允许冻结的 `mvn test` 命令，写入测试/构建配置、目标及项目标记受保护。它在限定根中自动确认普通业务写入；命令限制依赖可信样例，不提供操作系统沙箱。
+
+每次最终消息/工具组装后，先保存批次预留、请求摘要、候选关联与脱敏消息，再发送。试用任务上限不得超过批次剩余额度，失败和结果不明请求仍占额度，未知 token 明确标记。HTTP 请求体禁止自动重发，同一试用允许多次分别预留的请求。查询无需 Key，展示目录/加载/声明事件、工具结果、验收、完整请求审计及任务和批次消耗；详细证据在控制根 `skill-trials/<ID>/`。
+
+来源、候选、身份或冻结输入失效会暂停；必要审计保存失败停止后续操作。进程中断后可查看已保存预留与未知结果，查询不会重发。当前版本不自动恢复试用；普通 `--resume-task` 和 `--task-budget` 也不能绕过试用绑定。试用成功仅代表该开发任务通过验收，候选仍未启用、迁移能力仍未获批准。
+
+知识前提在最终回复和验收完成后仍会核对。结果归档完整校验后一次发布；归档未完成时，查询仍可展示当前任务的已保存状态与未知请求，不把部分复制当作最终完成。
+
 ### 普通聊天会话
 
 ```powershell

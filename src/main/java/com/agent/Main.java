@@ -377,6 +377,9 @@ public class Main {
                   --revise-skill V --revision-reason 原因 生成时指定已发布父版本及修订原因
                   --skill-candidates / --skill-candidate C 无 Key 查看候选和来源
                   --skill-batches / --skill-batch B 无 Key 查看累计请求、已知与未知用量
+                  --trial-skill C --skill-batch B --trial-control A --trial-source S
+                    --trial-catalog M --trial-max-steps N 指定候选的隔离有界开发试用
+                  --skill-trial T / --skill-trials --trial-control A 无 Key 查看试用及最终请求审计
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务
                 不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""");

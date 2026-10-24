@@ -28,11 +28,21 @@ public final class ExperienceLibrary {
     private final Path root;
     private final Path directory;
     private final TaskStore tasks;
+    private final String projectIdentity;
 
     public ExperienceLibrary(Path root) throws IOException {
+        this(root, null);
+    }
+
+    public static ExperienceLibrary readOnlyArchive(Path archive, Path originalProject) throws IOException {
+        return new ExperienceLibrary(archive, originalProject.toRealPath());
+    }
+
+    private ExperienceLibrary(Path root, Path originalProject) throws IOException {
         this.root = root.toRealPath();
+        this.projectIdentity = (originalProject == null ? this.root : originalProject).toString().replace('\\', '/');
         this.directory = this.root.resolve(".agent/experiences");
-        this.tasks = new TaskStore(this.root);
+        this.tasks = originalProject == null ? new TaskStore(this.root) : TaskStore.readOnlyArchive(root, originalProject);
         checkPath(directory);
     }
 
@@ -281,7 +291,7 @@ public final class ExperienceLibrary {
                 + "\n不适用情形: " + experience.advice().limitations());
     }
 
-    private String project() { return root.toString().replace('\\', '/'); }
+    private String project() { return projectIdentity; }
     private Path path(String id) throws IOException {
         if (id == null || !id.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) { throw new IOException("经验标识不合法"); }
         Path file = directory.resolve(id + ".json");

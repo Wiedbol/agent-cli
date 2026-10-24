@@ -12,6 +12,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @org.junit.jupiter.api.Test void shouldParseExplicitCandidateTrialAndReadOnlyQueries() {
+        var trial = SkillCommands.parse(new String[]{"--trial-skill", "candidate", "--skill-batch", "batch",
+                "--trial-control", "E:/control", "--trial-source", "E:/control/history/source/workspace",
+                "--trial-catalog", "E:/catalog.json", "--trial-max-steps", "4"});
+        org.junit.jupiter.api.Assertions.assertEquals(4, trial.trial().requests());
+        org.junit.jupiter.api.Assertions.assertEquals("candidate", trial.trial().candidate());
+        org.junit.jupiter.api.Assertions.assertEquals("id", SkillCommands.parse(new String[]{"--skill-trial", "id", "--trial-control", "E:/control"}).trialId());
+        org.junit.jupiter.api.Assertions.assertNotNull(SkillCommands.parse(new String[]{"--skill-trials", "--trial-control", "E:/control"}));
+    }
+    @org.junit.jupiter.api.Test void shouldRejectIncompleteOrConflictingTrialArguments() {
+        for (String[] args : new String[][] {
+                {"--trial-skill", "candidate"}, {"--skill-trial", "id"}, {"--trial-source", "x"},
+                {"--skill-trials", "--trial-control", "x", "--generate-skill", "exp"},
+                {"--skill-trial", "id", "--trial-control", "x", "--trial-max-steps", "4"},
+                {"--trial-skill", "c", "--skill-batch", "b", "--trial-control", "a", "--trial-source", "s", "--trial-catalog", "m", "--trial-max-steps", "0"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> SkillCommands.parse(args));
+        }
+    }
     @org.junit.jupiter.api.Test void shouldParseExplicitBoundedSkillCommands() {
         var batch = SkillCommands.parse(new String[]{"--start-skill-batch", "--request-limit", "3"});
         org.junit.jupiter.api.Assertions.assertEquals(3, batch.limit());

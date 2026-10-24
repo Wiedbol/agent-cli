@@ -26,13 +26,20 @@ public final class TaskCoordinator {
     }
     private final ControllerFactory controllerFactory;
     private final PrintStream out;
+    private final com.agent.skill.SkillKnowledge knowledge;
 
     public TaskCoordinator(Path root, CommandRunner runner,
                            ControllerFactory controllerFactory, PrintStream out) {
+        this(root, runner, controllerFactory, out, null);
+    }
+
+    public TaskCoordinator(Path root, CommandRunner runner, ControllerFactory controllerFactory,
+                           PrintStream out, com.agent.skill.SkillKnowledge knowledge) {
         this.root = root;
         this.runner = runner;
         this.controllerFactory = controllerFactory;
         this.out = out;
+        this.knowledge = knowledge;
     }
 
     public TaskRecord start(String goal, String command) throws IOException, InterruptedException {
@@ -67,7 +74,8 @@ public final class TaskCoordinator {
         if (!decision.allowed()) { throw new IOException("验收命令被守卫拒绝: " + decision.reason()); }
         TaskStore store = new TaskStore(project);
         try (TaskStore.Writer writer = store.lock()) {
-            TaskRecord task = store.create(goal, command, knowledgeMode);
+            TaskRecord task = store.create(goal, command, knowledgeMode, knowledge == null ? null : knowledge.trialId());
+            if (knowledge != null) { knowledge.bind(task); }
             if (maxRequests > task.progress.maxRequests) {
                 task.progress.budgetChanges.add(new TaskRecord.BudgetChange(task.progress.maxRequests,
                         maxRequests, System.currentTimeMillis()));
@@ -82,6 +90,7 @@ public final class TaskCoordinator {
         TaskStore store = new TaskStore(root);
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.read(id);
+            if (task.skillTrialId != null) { throw new IOException("试用任务必须通过原试用控制入口处理，不能普通恢复"); }
             if (task.state == TaskRecord.State.Abandoned) { throw new IOException("已放弃任务不能恢复"); }
             return execute(store, task, interactive, true);
         }
@@ -110,6 +119,7 @@ public final class TaskCoordinator {
             TaskAcceptance acceptance = new TaskAcceptance(project, store, observedRunner);
             while (true) {
                 protection.check();
+                if (knowledge != null) { knowledge.check(); }
                 switch (task.checkpoint.phase) {
                     case BASELINE -> {
                         task.state = TaskRecord.State.Verifying;
@@ -187,6 +197,7 @@ public final class TaskCoordinator {
     }
 
     private String experienceAdvice(TaskRecord task, TaskAcceptance.Evidence evidence) {
+        if (knowledge != null) { return knowledge.discover(task, evidence); }
         if (task.knowledgeMode != KnowledgeMode.EXPERIENCE || !"FAILED".equals(evidence.verdict())) { return ""; }
         String key = CoreError.key(evidence.details());
         if (task.experienceFailures.contains(key)) { return ""; }
@@ -214,6 +225,7 @@ public final class TaskCoordinator {
             return evidence;
         }
         var evidence = acceptance.check(task, kind, identities);
+        if (knowledge != null) { knowledge.check(); }
         out.println("[任务] " + kind + " 验收结果已记录: " + evidence.verdict());
         return evidence;
     }
@@ -223,6 +235,7 @@ public final class TaskCoordinator {
         TaskStore store = new TaskStore(root);
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.read(id);
+            if (task.skillTrialId != null) { throw new IOException("试用额度由冻结任务/批次约束，不能单独扩额"); }
             if (task.state != TaskRecord.State.Paused || task.schemaVersion < 3) {
                 throw new IOException("只能提高已有累计统计的暂停任务预算");
             }
