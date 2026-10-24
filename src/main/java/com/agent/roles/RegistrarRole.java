@@ -49,28 +49,28 @@ public class RegistrarRole {
 
     public static RegistrarRole standard(Path root, CommandRunner commandRunner,
                                          java.util.function.BiConsumer<Path, String> checkVersion) {
+        return standard(root, commandRunner, checkVersion, path -> true);
+    }
+
+    /** 只在管理任务装配时注入可见性，避免改变普通聊天的工具行为。 */
+    public static RegistrarRole standard(Path root, CommandRunner commandRunner,
+                                         java.util.function.BiConsumer<Path, String> checkVersion,
+                                         java.util.function.Predicate<Path> isVisible) {
+        IgnoreRules rules = ignoreRules(root);
         return new RegistrarRole()
-                .register(new ReadFileTool())
+                .register(new ReadFileTool(isVisible))
                 .register(new WriteFileTool())
                 .register(new ReplaceTextTool(checkVersion))
-                .register(listFilesTool(root))
-                .register(searchCodeTool(root))
+                .register(new ListFilesTool(rules, isVisible))
+                .register(new SearchCodeTool(rules, isVisible))
                 .register(new RunCommandTool(commandRunner));
     }
 
-    private static ListFilesTool listFilesTool(Path root) {
+    private static IgnoreRules ignoreRules(Path root) {
         try {
-            return ListFilesTool.fromConfig(root.resolve(".agentignore"));
+            return IgnoreRules.load(root.resolve(".agentignore"));
         } catch (IOException unreadable) {
-            return new ListFilesTool(IgnoreRules.defaults());
-        }
-    }
-
-    private static SearchCodeTool searchCodeTool(Path root) {
-        try {
-            return SearchCodeTool.fromConfig(root.resolve(".agentignore"));
-        } catch (IOException unreadable) {
-            return new SearchCodeTool(IgnoreRules.defaults());
+            return IgnoreRules.defaults();
         }
     }
 

@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 /**
@@ -20,13 +21,19 @@ import java.util.stream.Stream;
 public class ListFilesTool implements Tool {
 
     private final IgnoreRules ignoreRules;
+    private final Predicate<Path> isVisible;
 
     public ListFilesTool() {
         this(IgnoreRules.defaults());
     }
 
     public ListFilesTool(IgnoreRules ignoreRules) {
+        this(ignoreRules, path -> true);
+    }
+
+    public ListFilesTool(IgnoreRules ignoreRules, Predicate<Path> isVisible) {
         this.ignoreRules = Objects.requireNonNull(ignoreRules, "ignoreRules");
+        this.isVisible = Objects.requireNonNull(isVisible, "isVisible");
     }
 
     /** 用配置文件（如 .agentignore）构造。 */
@@ -98,10 +105,11 @@ public class ListFilesTool implements Tool {
         if (maxDepth < 0) {
             throw new IllegalArgumentException("maxDepth 不能为负数: " + maxDepth);
         }
-        requireDirectory(root);
+        requireVisibleDirectory(root);
         try (Stream<Path> stream = Files.walk(root, maxDepth)) {
             return stream
                     .filter(Files::isRegularFile)
+                    .filter(isVisible)
                     .filter(path -> !ignoreRules.isIgnored(path, root))
                     .map(path -> toRelativeString(root, path))
                     .sorted()
@@ -115,11 +123,11 @@ public class ListFilesTool implements Tool {
      * @return 每一行一个条目，目录以 {@code /} 结尾，缩进为 2 空格 × 层数
      */
     public List<String> tree(Path root) throws IOException {
-        requireDirectory(root);
+        requireVisibleDirectory(root);
         try (Stream<Path> stream = Files.walk(root)) {
             List<String> lines = new ArrayList<>();
             for (Path path : stream.sorted().toList()) {
-                if (path.equals(root) || ignoreRules.isIgnored(path, root)) {
+                if (path.equals(root) || !isVisible.test(path) || ignoreRules.isIgnored(path, root)) {
                     continue;
                 }
                 Path relative = root.relativize(path);
@@ -133,6 +141,11 @@ public class ListFilesTool implements Tool {
 
     private static String toRelativeString(Path root, Path path) {
         return root.relativize(path).toString().replace('\\', '/');
+    }
+
+    private void requireVisibleDirectory(Path root) throws IOException {
+        requireDirectory(root);
+        if (!isVisible.test(root)) { throw new SecurityException("管理任务禁止通用工具列举知识元数据或历史记录"); }
     }
 
     private static void requireDirectory(Path root) throws NoSuchFileException {

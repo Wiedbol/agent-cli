@@ -6,6 +6,7 @@ import com.agent.roles.ControllerRole;
 import com.agent.session.SessionExporter;
 import com.agent.session.SessionPaths;
 import com.agent.session.SessionStore;
+import com.agent.task.KnowledgeMode;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -43,6 +44,8 @@ public class Main {
             System.exit(2);
             return;
         }
+
+        if (options.help()) { printHelp(System.out); return; }
 
         Path root = options.root() == null ? Path.of("").toAbsolutePath() : options.root();
         if (options.tasks() || options.taskStatus() != null || options.reagreeId() != null || options.budgetTaskId() != null
@@ -115,7 +118,7 @@ public class Main {
         int exitCode = options.extractExperience() != null
                 ? cli.extractExperience(options.extractExperience(), true)
                 : options.resumeTask() != null ? cli.resumeManagedTask(options.resumeTask()) : options.task() != null
-                ? cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), !options.noExperiences()) : cli.runRepl();
+                ? cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), options.knowledgeMode()) : cli.runRepl();
         if (exitCode != 0) {
             System.exit(exitCode);
         }
@@ -175,7 +178,8 @@ public class Main {
                    String sessionName, String sessionDir, String exportId,
                    boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId,
                    String resumeTask, String retryTask, String operation, String abandonTask, String replanTask,
-                   String extractExperience, boolean experiences, String experience, String disableExperience, boolean noExperiences) {
+                   String extractExperience, boolean experiences, String experience, String disableExperience, boolean noExperiences,
+                   KnowledgeMode knowledgeMode, boolean help) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -205,13 +209,29 @@ public class Main {
             String disableExperience = null;
             boolean maximumSpecified = false;
             boolean noExperiences = false;
+            KnowledgeMode knowledgeMode = null;
+            boolean help = false;
 
             if (args != null) {
                 for (int i = 0; i < args.length; i++) {
                     String arg = args[i];
                     switch (arg) {
+                        case "--help", "-h" -> help = true;
                         case "--tasks" -> tasks = true;
-                        case "--no-experiences" -> noExperiences = true;
+                        case "--no-experiences" -> {
+                            if (noExperiences) { throw new IllegalArgumentException("知识模式选项不能重复"); }
+                            noExperiences = true;
+                        }
+                        case "--knowledge-mode" -> {
+                            if (knowledgeMode != null) { throw new IllegalArgumentException("知识模式选项不能重复"); }
+                            if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
+                                throw new IllegalArgumentException("--knowledge-mode 需要 none、experience 或 skill");
+                            }
+                            try { knowledgeMode = KnowledgeMode.valueOf(args[++i].toUpperCase(Locale.ROOT)); }
+                            catch (IllegalArgumentException invalid) {
+                                throw new IllegalArgumentException("--knowledge-mode 只支持 none、experience 或 skill");
+                            }
+                        }
                         case "--experiences" -> experiences = true;
                         case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget", "--resume-task",
                                 "--retry-operation", "--operation", "--abandon-task", "--replan-task",
@@ -310,11 +330,38 @@ public class Main {
                 throw new IllegalArgumentException("经验操作不调整任务预算");
             }
             if (noExperiences && task == null) { throw new IllegalArgumentException("--no-experiences 仅用于新任务；恢复沿用已保存选项"); }
+            if (knowledgeMode != null && task == null) {
+                throw new IllegalArgumentException("--knowledge-mode 仅用于新任务；恢复沿用已保存模式");
+            }
+            if (knowledgeMode != null && noExperiences) {
+                throw new IllegalArgumentException("--knowledge-mode 与 --no-experiences 不能混用");
+            }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
                     resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId,
                     resumeTask, retryTask, operation, abandonTask, replanTask,
-                    extractExperience, experiences, experience, disableExperience, noExperiences);
+                    extractExperience, experiences, experience, disableExperience, noExperiences,
+                    knowledgeMode != null ? knowledgeMode : noExperiences ? KnowledgeMode.NONE : KnowledgeMode.EXPERIENCE, help);
         }
+    }
+
+    /** 帮助在读取 Key、会话和项目状态之前返回，防止查看选项意外启动执行。 */
+    private static void printHelp(PrintStream out) {
+        out.println("""
+                AI Coding Agent CLI
+                用法: java -jar agent-cli.jar [--root 项目目录] [任务或查询选项]
+                  --task 目标                新建管理任务，独立验收后判断完成
+                  --knowledge-mode 模式      仅新任务：none | experience | skill，默认 experience
+                    none: 不使用历史知识；experience: 使用合格经验
+                    skill: 技能模式，当前不加载技能，继续独立修复
+                  --no-experiences           none 的兼容别名，不能与 --knowledge-mode 混用
+                  --resume-task 任务ID       显式恢复，沿用已保存知识模式与累计预算
+                  --tasks / --task-status ID 无模型查询任务及知识模式
+                  --accept-command 命令      新任务的验收命令，默认 mvn test
+                  --max-steps 次数           新任务累计请求上限，默认 12
+                  --yes                      仅跳过普通工具确认
+                  --local                    无模型本地回显
+                  --help / -h                仅显示帮助，不读取 Key 或执行任务
+                不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""");
     }
 
     /** 解析 {@code --upper}：只判断开关是否存在。 */

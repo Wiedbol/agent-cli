@@ -9,6 +9,8 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Tool：读取指定文本文件的内容。
@@ -17,6 +19,15 @@ import java.util.List;
  * 非法字节序列抛出 {@link IOException}，不能被静默替换成问号，否则后续编辑会污染原文。
  */
 public class ReadFileTool implements Tool {
+    private final Predicate<Path> isVisible;
+
+    public ReadFileTool() {
+        this(path -> true);
+    }
+
+    public ReadFileTool(Predicate<Path> isVisible) {
+        this.isVisible = Objects.requireNonNull(isVisible, "isVisible");
+    }
 
     @Override
     public String name() {
@@ -108,7 +119,10 @@ public class ReadFileTool implements Tool {
         return String.join("\n", slice);
     }
 
-    private static void requireRegularFile(Path path) throws NoSuchFileException {
+    private void requireRegularFile(Path path) throws NoSuchFileException {
+        if (path != null && !isVisible.test(path)) {
+            throw new SecurityException("管理任务禁止通用工具读取知识元数据或历史记录");
+        }
         if (path == null || !Files.isRegularFile(path)) {
             throw new NoSuchFileException("不是文件或不存在: " + path);
         }

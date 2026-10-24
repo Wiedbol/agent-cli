@@ -17,6 +17,34 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CodingAgentCliExperienceTest {
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = com.agent.task.KnowledgeMode.class, names = {"NONE", "SKILL"})
+    void shouldKeepExplicitModeOnResumeWithoutInjectingAvailableExperience(com.agent.task.KnowledgeMode mode) throws Exception {
+        String sourceTask = task(false);
+        String experience = approve(sourceTask);
+        Files.writeString(source(), "broken");
+        output.reset();
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var first = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("read",
+                new ToolCall.Function("read_file", "{\"path\":\"src/main/java/App.java\"}"))), 1, 1)));
+        var limited = new CodingAgentCli(root, first, true, 1, new BufferedReader(new StringReader("")),
+                stream, stream, null, acceptance());
+        assertEquals(1, limited.startManagedTask("修复", null, false, mode), text());
+        var match = Pattern.compile("任务: ([0-9a-f-]{36})").matcher(text());
+        assertTrue(match.find(), text());
+        String taskId = match.group(1);
+        assertEquals(0, cli(null, "").raiseTaskBudget(taskId, 3), text());
+        var resumed = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("fix",
+                new ToolCall.Function("write_file", "{\"path\":\"src/main/java/App.java\",\"content\":\"fixed\"}"))), 1, 1),
+                new LLMResponse("请验收", null, 1, 1)));
+        assertEquals(0, cli(resumed, "").resumeManagedTask(taskId, false), text());
+        assertFalse(first.requests().toString().contains("参考经验 " + experience));
+        assertFalse(resumed.requests().toString().contains("参考经验 " + experience));
+        output.reset();
+        assertEquals(0, cli(null, "").showTask(taskId), text());
+        assertTrue(text().contains("知识模式: " + mode), text());
+    }
+
     @Test void shouldPreserveGoalExampleInPersistedUnsentFeedback() throws Exception {
         String task = task(false);
         String block = "\n参考经验 11111111-1111-1111-1111-111111111111；来源任务 22222222-2222-2222-2222-222222222222；匹配原因：示例仅供参考，仍须遵守当前目标、守卫和独立验收。";

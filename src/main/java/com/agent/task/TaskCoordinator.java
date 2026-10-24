@@ -50,6 +50,12 @@ public final class TaskCoordinator {
 
     public TaskRecord start(String goal, String command, int maxRequests, boolean interactive, boolean experiencesEnabled)
             throws IOException, InterruptedException {
+        return start(goal, command, maxRequests, interactive,
+                experiencesEnabled ? KnowledgeMode.EXPERIENCE : KnowledgeMode.NONE);
+    }
+
+    public TaskRecord start(String goal, String command, int maxRequests, boolean interactive, KnowledgeMode knowledgeMode)
+            throws IOException, InterruptedException {
         Path project = root.toRealPath();
         if (maxRequests <= 0) { throw new IOException("总请求预算必须为正数"); }
         if (goal == null || goal.isBlank() || command == null || command.isBlank()
@@ -61,8 +67,7 @@ public final class TaskCoordinator {
         if (!decision.allowed()) { throw new IOException("验收命令被守卫拒绝: " + decision.reason()); }
         TaskStore store = new TaskStore(project);
         try (TaskStore.Writer writer = store.lock()) {
-            TaskRecord task = store.create(goal, command);
-            task.experiencesEnabled = experiencesEnabled;
+            TaskRecord task = store.create(goal, command, knowledgeMode);
             if (maxRequests > task.progress.maxRequests) {
                 task.progress.budgetChanges.add(new TaskRecord.BudgetChange(task.progress.maxRequests,
                         maxRequests, System.currentTimeMillis()));
@@ -182,7 +187,7 @@ public final class TaskCoordinator {
     }
 
     private String experienceAdvice(TaskRecord task, TaskAcceptance.Evidence evidence) {
-        if (!task.experiencesEnabled || !"FAILED".equals(evidence.verdict())) { return ""; }
+        if (task.knowledgeMode != KnowledgeMode.EXPERIENCE || !"FAILED".equals(evidence.verdict())) { return ""; }
         String key = CoreError.key(evidence.details());
         if (task.experienceFailures.contains(key)) { return ""; }
         task.experienceFailures.add(key);

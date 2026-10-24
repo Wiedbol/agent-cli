@@ -12,6 +12,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @Test
+    void shouldParseExplicitKnowledgeModeAndKeepExperienceDefault() {
+        assertEquals(com.agent.task.KnowledgeMode.EXPERIENCE,
+                Main.Options.parse(new String[]{"--task", "repair"}).knowledgeMode());
+        assertEquals(com.agent.task.KnowledgeMode.NONE,
+                Main.Options.parse(new String[]{"--task", "repair", "--no-experiences"}).knowledgeMode());
+        assertEquals(com.agent.task.KnowledgeMode.SKILL,
+                Main.Options.parse(new String[]{"--task", "repair", "--knowledge-mode", "skill"}).knowledgeMode());
+    }
+
+    @Test
+    void shouldRejectInvalidOrConflictingKnowledgeModeOptions() {
+        for (String[] args : new String[][]{
+                {"--task", "fix", "--knowledge-mode"}, {"--task", "fix", "--knowledge-mode", ""},
+                {"--task", "fix", "--knowledge-mode", "--yes"}, {"--task", "fix", "--knowledge-mode", "other"},
+                {"--task", "fix", "--knowledge-mode", "skill", "--knowledge-mode", "none"},
+                {"--task", "fix", "--knowledge-mode", "none", "--no-experiences"},
+                {"--task", "fix", "--no-experiences", "--knowledge-mode", "skill"},
+                {"--task", "fix", "--no-experiences", "--no-experiences"},
+                {"--resume-task", "id", "--knowledge-mode", "experience"},
+                {"--tasks", "--knowledge-mode", "none"}, {"--knowledge-mode", "skill"},
+                {"--local", "--knowledge-mode", "none"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(args));
+        }
+        assertEquals(com.agent.task.KnowledgeMode.NONE,
+                Main.Options.parse(new String[]{"--task", "fix", "--knowledge-mode", "NONE"}).knowledgeMode());
+        assertEquals(com.agent.task.KnowledgeMode.EXPERIENCE,
+                Main.Options.parse(new String[]{"--task", "fix", "--knowledge-mode", "experience"}).knowledgeMode());
+    }
+
+    @Test
+    void shouldExposeHelpWithoutStartingTask() {
+        assertTrue(Main.Options.parse(new String[]{"--help"}).help());
+        assertTrue(Main.Options.parse(new String[]{"-h"}).help());
+        assertNull(Main.Options.parse(new String[]{"--help"}).task());
+    }
+
 
     @Test
     void shouldRequireExplicitMaximumForTaskBudgetIncrease() {

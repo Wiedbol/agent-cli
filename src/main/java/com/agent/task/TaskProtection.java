@@ -75,6 +75,16 @@ public final class TaskProtection {
         } catch (IOException failed) { return true; }
     }
 
+    /** 元数据虽不参与源码快照，通用读工具仍不能把历史知识作为普通文件返回。 */
+    public boolean isReadable(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (normalized.startsWith(root.resolve(".agent"))) { return false; }
+        try {
+            Path actual = Files.exists(normalized) ? normalized.toRealPath() : normalized;
+            return actual.startsWith(root) && !actual.startsWith(root.resolve(".agent"));
+        } catch (IOException failed) { return false; }
+    }
+
     public List<String> changes(Map<String, String> current) {
         var paths = new TreeSet<>(frozen.keySet());
         current.keySet().stream().filter(TaskProtection::isBuildInput).forEach(paths::add);

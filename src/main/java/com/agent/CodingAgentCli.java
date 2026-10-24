@@ -17,6 +17,7 @@ import com.agent.task.TaskStore;
 import com.agent.task.TaskAcceptance;
 import com.agent.task.TaskCoordinator;
 import com.agent.task.TaskProtection;
+import com.agent.task.KnowledgeMode;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -119,7 +120,7 @@ public class CodingAgentCli {
             return;
         }
         this.registrar = protection == null ? RegistrarRole.standard(this.root, commandRunner)
-                : RegistrarRole.standard(this.root, commandRunner, protection::checkFileVersion);
+                : RegistrarRole.standard(this.root, commandRunner, protection::checkFileVersion, protection::isReadable);
         GuardRole guard = protection == null ? new GuardRole(this.root)
                 : new GuardRole(this.root, protection::isWriteProtected);
         ExecutorRole executor = new ExecutorRole(this.root, ExecutorRole.DEFAULT_MAX_RESULT_CHARS, out);
@@ -223,12 +224,18 @@ public class CodingAgentCli {
     }
 
     public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, boolean experiencesEnabled) {
+        return startManagedTask(goal, acceptanceCommand, interactive,
+                experiencesEnabled ? KnowledgeMode.EXPERIENCE : KnowledgeMode.NONE);
+    }
+
+    public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, KnowledgeMode knowledgeMode) {
+        if (knowledgeMode == null) { err.println("任务需要明确的知识模式"); return 2; }
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
                             managedSession, managedRunner, protection).controller, out)
-                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive, experiencesEnabled);
+                    .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive, knowledgeMode);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); err.println("任务验收被中断"); return 4;
@@ -360,6 +367,7 @@ public class CodingAgentCli {
         }
         out.println("任务: " + task.id + "\n状态: " + state + "\n目标: " + task.goal
                 + "\n会话: " + task.sessionId + "\n验收: " + task.command
+                + "\n知识模式: " + task.knowledgeMode
                 + "\n验收版本: " + task.acceptanceVersion + "\n原因: " + reason);
         var progress = task.progress;
         out.println("模型请求: " + progress.requests + "/" + progress.maxRequests

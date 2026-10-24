@@ -76,8 +76,15 @@ public final class TaskStore {
     }
 
     public TaskRecord create(String goal, String command) throws IOException {
+        return create(goal, command, KnowledgeMode.EXPERIENCE);
+    }
+
+    /** 首次检查点就保存用户选择，避免中断后把技能任务当作默认经验任务。 */
+    public TaskRecord create(String goal, String command, KnowledgeMode knowledgeMode) throws IOException {
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 7;
+        task.schemaVersion = 8;
+        task.knowledgeMode = java.util.Objects.requireNonNull(knowledgeMode, "knowledgeMode");
+        task.experiencesEnabled = knowledgeMode == KnowledgeMode.EXPERIENCE;
         task.id = UUID.randomUUID().toString();
         task.project = root.toString().replace('\\', '/');
         task.goal = goal;
@@ -188,8 +195,12 @@ public final class TaskStore {
                 throw new IOException("任务检查点损坏，完整性校验失败");
             }
         }
+        if (node.path("schemaVersion").asInt() >= 8
+                && (!node.path("knowledgeMode").isTextual() || !node.path("experiencesEnabled").isBoolean())) {
+            throw new IOException("任务知识模式记录缺失或类型不合法");
+        }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 7) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 8) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
@@ -211,6 +222,11 @@ public final class TaskStore {
         if (task.experienceFailures == null || task.experienceAdviceIds == null || task.schemaVersion >= 7
                 && (!node.hasNonNull("experiencesEnabled") || !node.hasNonNull("experienceFailures") || !node.hasNonNull("experienceAdviceIds"))) {
             throw new IOException("任务经验选项或失败指纹记录缺失");
+        }
+        if (task.schemaVersion < 8) {
+            task.knowledgeMode = task.experiencesEnabled ? KnowledgeMode.EXPERIENCE : KnowledgeMode.NONE;
+        } else if (task.knowledgeMode == null || task.experiencesEnabled != (task.knowledgeMode == KnowledgeMode.EXPERIENCE)) {
+            throw new IOException("任务知识模式与经验开关记录不一致");
         }
         if (task.schemaVersion >= 5 && !node.hasNonNull("resolutions")) { throw new IOException("任务缺少人工处置记录"); }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }

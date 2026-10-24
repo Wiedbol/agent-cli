@@ -22,6 +22,7 @@ public final class TaskRecord {
     public State state = State.Created;
     public String reason = "";
     public boolean experiencesEnabled = true;
+    public KnowledgeMode knowledgeMode = KnowledgeMode.EXPERIENCE;
     public List<String> experienceFailures = new ArrayList<>();
     public List<String> experienceAdviceIds = new ArrayList<>();
     public Map<String, String> files = new LinkedHashMap<>();

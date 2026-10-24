@@ -90,6 +90,27 @@ java '-Dagent.encoding=UTF-8' -jar $agentJar --local
 | `--resume` | 恢复聊天内容 | 不继续旧任务 |
 | `--resume-task` | 显式恢复管理任务 | 使用原目标、约定与累计预算继续执行 |
 
+### 管理任务的知识模式
+
+新任务可用 `--knowledge-mode none|experience|skill` 明确选择知识范围：
+
+| 模式 | 行为 |
+|---|---|
+| `experience`（默认） | 使用来源有效、启用且符合条件的失败经验 |
+| `none` | 不注入历史经验，不提供技能目录或加载入口 |
+| `skill` | 保存技能模式，不自动注入旧经验；当前版本尚不加载技能，仍按普通修复流程独立验收 |
+
+```powershell
+java -jar $agentJar --root $projectRoot --task '修复金额计算' --knowledge-mode none
+java -jar $agentJar --help
+```
+
+模式随任务保存，`--resume-task` 沿用原模式，不能用参数覆盖。`--no-experiences` 保留为 `none` 的兼容别名；它与 `--knowledge-mode` 不能混用，模式选项也不能重复指定。状态查询显示实际模式，无需模型 Key；新格式模式缺失、非法或互相矛盾时报告状态损坏，不能默认为经验模式继续。
+
+管理任务的通用读取、列举、搜索工具不能访问根目录 `.agent/` 中的知识和历史记录；需要查看任务或经验时使用对应 CLI 查询。普通项目文件及普通聊天的工具行为保持不变。
+
+旧任务继续按原经验开关解释模式。若恢复上下文包含旧工具成功读取元数据或扫描其祖先目录的记录，由于旧版未记录逐项可见性，任务会保守暂停并提示新建任务；普通源码读取记录仍可恢复，原轨迹与模式保留。
+
 ### 普通聊天会话
 
 ```powershell
@@ -189,7 +210,7 @@ java -jar $agentJar --root $projectRoot --disable-experience <经验ID>
 
 适用条件中出现完整64位文件SHA-256时，需在当前文件快照中找到该版本；不将它当作错误消息中的关键词。自然语言条件仍采用保守启发式，不能替代严格的文件前提与独立验收。
 
-可在新任务中关闭经验：
+可在新任务中通过兼容别名关闭经验（等价于 `--knowledge-mode none`）：
 
 ```powershell
 java -jar $agentJar --root $projectRoot --task '修复金额计算' --no-experiences

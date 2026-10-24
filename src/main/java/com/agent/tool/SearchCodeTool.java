@@ -27,13 +27,19 @@ public class SearchCodeTool implements Tool {
     }
 
     private final IgnoreRules ignoreRules;
+    private final Predicate<Path> isVisible;
 
     public SearchCodeTool() {
         this(IgnoreRules.defaults());
     }
 
     public SearchCodeTool(IgnoreRules ignoreRules) {
+        this(ignoreRules, path -> true);
+    }
+
+    public SearchCodeTool(IgnoreRules ignoreRules, Predicate<Path> isVisible) {
         this.ignoreRules = Objects.requireNonNull(ignoreRules, "ignoreRules");
+        this.isVisible = Objects.requireNonNull(isVisible, "isVisible");
     }
 
     /** 用配置文件（如 .agentignore）构造。 */
@@ -121,12 +127,14 @@ public class SearchCodeTool implements Tool {
         if (root == null || !Files.isDirectory(root)) {
             throw new NoSuchFileException("不是目录或不存在: " + root);
         }
+        if (!isVisible.test(root)) { throw new SecurityException("管理任务禁止通用工具搜索知识元数据或历史记录"); }
         List<Match> result = new ArrayList<>();
         // 先把路径收集成 List 再逐个读取：确保 Files.walk 的 Stream 已经关闭，
         // 避免 Windows 上目录句柄未释放导致的后续操作失败。
         try (Stream<Path> stream = Files.walk(root)) {
             List<Path> files = stream
                     .filter(Files::isRegularFile)
+                    .filter(isVisible)
                     .filter(path -> !ignoreRules.isIgnored(path, root))
                     .sorted()
                     .toList();
