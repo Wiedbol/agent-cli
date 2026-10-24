@@ -111,6 +111,25 @@ java -jar $agentJar --help
 
 旧任务继续按原经验开关解释模式。若恢复上下文包含旧工具成功读取元数据或扫描其祖先目录的记录，由于旧版未记录逐项可见性，任务会保守暂停并提示新建任务；普通源码读取记录仍可恢复，原轨迹与模式保留。
 
+### 从经验生成技能候选
+
+先用已有的 `--experiences` 查看来源，再显式创建批次并复制返回的批次 ID。以下操作仅生成待审阅候选，不会启用技能：
+
+```powershell
+java -jar $agentJar --root $projectRoot --start-skill-batch --request-limit 2
+java -jar $agentJar --root $projectRoot --generate-skill '经验ID1,经验ID2' --skill-batch '批次ID'
+java -jar $agentJar --root $projectRoot --skill-candidates
+java -jar $agentJar --root $projectRoot --skill-candidate '候选ID'
+java -jar $agentJar --root $projectRoot --skill-batch '批次ID'
+java -jar $agentJar --root $projectRoot --skill-batches
+```
+
+只接受一至十条不重复、已确认且启用、来源证据有效的同项目经验；程序独立检查真实失败、修复意图与结果、文件版本链及最终验收。候选列出适用与不适用条件、诊断、修复和验证流程，绑定来源摘要并标记迁移能力未验证。相同建议独立保存，不自动合并。结构化记录与可审阅 Markdown 位于项目 `.agent/skills/`；改写内容或来源会使查询报损坏或不可用。
+
+每次显式生成最多请求一次模型。发送前预留并保存累计消耗，失败、无效响应和中断后结果未知的请求均占额度；用量未返回时显示未知，不能当作零。额度耗尽暂停，重启不清零，也不自动重试或提高额度。可显式新建批次，旧账本保留。查询与批次创建无需 Key；只有生成需要 Key。
+
+生成时可同时加 `--revise-skill '已发布版本ID' --revision-reason '修订原因'`，绑定同项目可用父版本和原内容摘要；缺少已发布版本时拒绝生成。发布、试用和批准入口由后续功能交付，当前候选不能启用；`--yes` 不适用于技能命令。
+
 ### 普通聊天会话
 
 ```powershell

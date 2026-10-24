@@ -12,6 +12,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @org.junit.jupiter.api.Test void shouldParseExplicitBoundedSkillCommands() {
+        var batch = SkillCommands.parse(new String[]{"--start-skill-batch", "--request-limit", "3"});
+        org.junit.jupiter.api.Assertions.assertEquals(3, batch.limit());
+        var generate = SkillCommands.parse(new String[]{"--generate-skill", "a,b", "--skill-batch", "batch"});
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of("a", "b"), generate.sources());
+        org.junit.jupiter.api.Assertions.assertEquals("batch", generate.batch());
+        org.junit.jupiter.api.Assertions.assertNull(SkillCommands.parse(new String[]{"--task", "repair"}));
+        org.junit.jupiter.api.Assertions.assertNotNull(SkillCommands.parse(new String[]{"--skill-candidates"}));
+        org.junit.jupiter.api.Assertions.assertNotNull(SkillCommands.parse(new String[]{"--skill-batches"}));
+        org.junit.jupiter.api.Assertions.assertNotNull(SkillCommands.parse(new String[]{"--skill-candidate", "id"}));
+        org.junit.jupiter.api.Assertions.assertNotNull(SkillCommands.parse(new String[]{"--skill-batch", "id"}));
+    }
+    @org.junit.jupiter.api.Test void shouldRejectMixedOrUnboundedSkillCommands() {
+        for (String[] args : new String[][] {
+                {"--generate-skill", "exp"}, {"--start-skill-batch"}, {"--request-limit", "2"},
+                {"--start-skill-batch", "--request-limit", "0"}, {"--skill-candidates", "--task", "repair"},
+                {"--skill-batches", "--resume", "latest"}, {"--skill-batch"},
+                {"--generate-skill", "exp", "--skill-batch", "b", "--revise-skill", "v"},
+                {"--skill-batch", "b", "--request-limit", "2"},
+                {"--skill-candidates", "--skill-batches"}, {"--skill-candidates", "--skill-candidates"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> SkillCommands.parse(args));
+        }
+    }
     @Test
     void shouldParseExplicitKnowledgeModeAndKeepExperienceDefault() {
         assertEquals(com.agent.task.KnowledgeMode.EXPERIENCE,

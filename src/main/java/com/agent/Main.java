@@ -37,6 +37,19 @@ public class Main {
         ConsoleStreams.configureStdout();
         ConsoleStreams.configureStderr();
 
+        try {
+            var skill = SkillCommands.parse(args);
+            if (skill != null) {
+                int code = SkillCommands.run(skill);
+                if (code != 0) { System.exit(code); }
+                return;
+            }
+        } catch (IllegalArgumentException invalid) {
+            System.err.println("参数错误: " + invalid.getMessage());
+            System.exit(2);
+            return;
+        }
+
         Options options;
         try { options = Options.parse(args); }
         catch (IllegalArgumentException invalid) {
@@ -359,6 +372,11 @@ public class Main {
                   --accept-command 命令      新任务的验收命令，默认 mvn test
                   --max-steps 次数           新任务累计请求上限，默认 12
                   --yes                      仅跳过普通工具确认
+                  --start-skill-batch --request-limit N 显式新建累计有界技能批次，无需 Key
+                  --generate-skill E1,E2 --skill-batch B 从合格经验生成未启用候选
+                  --revise-skill V --revision-reason 原因 生成时指定已发布父版本及修订原因
+                  --skill-candidates / --skill-candidate C 无 Key 查看候选和来源
+                  --skill-batches / --skill-batch B 无 Key 查看累计请求、已知与未知用量
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务
                 不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""");

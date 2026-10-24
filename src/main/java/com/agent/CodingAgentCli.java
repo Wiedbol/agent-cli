@@ -253,6 +253,23 @@ public class CodingAgentCli {
         } catch (IOException failed) { err.println("任务查询失败: " + failed.getMessage()); return 4; }
     }
 
+    public int startSkillBatch(int limit) { return skillOperation(skills -> skills.startBatch(limit)); }
+    public int generateSkillCandidate(String batch, java.util.List<String> sources, String parent, String reason) {
+        try { return new com.agent.skill.SkillCandidates(root, out).generate(batch, sources, parent, reason, client) ? 0 : 1; }
+        catch (IOException failed) { err.println("技能生成失败: " + failed.getMessage()); return 4; }
+    }
+    public int listSkillCandidates() { return skillOperation(com.agent.skill.SkillCandidates::listCandidates); }
+    public int showSkillCandidate(String id) { return skillOperation(skills -> skills.showCandidate(id)); }
+    public int listSkillBatches() { return skillOperation(com.agent.skill.SkillCandidates::listBatches); }
+    public int showSkillBatch(String id) { return skillOperation(skills -> skills.showBatch(id)); }
+    @FunctionalInterface private interface SkillOperation {
+        void run(com.agent.skill.SkillCandidates skills) throws IOException;
+    }
+    private int skillOperation(SkillOperation operation) {
+        try { operation.run(new com.agent.skill.SkillCandidates(root, out)); return 0; }
+        catch (IOException failed) { err.println("技能操作失败: " + failed.getMessage()); return 4; }
+    }
+
     public int extractExperience(String id, boolean interactive) {
         try {
             return new com.agent.experience.ExperienceLibrary(root).extract(id, client, in, out, interactive) ? 0 : 1;
