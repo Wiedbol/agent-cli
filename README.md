@@ -130,7 +130,7 @@ java -jar $agentJar --root $projectRoot --skill-batches
 
 每次显式生成最多请求一次模型。发送前预留并保存累计消耗，失败、无效响应和中断后结果未知的请求均占额度；用量未返回时显示未知，不能当作零。额度耗尽暂停，重启不清零，也不自动重试或提高额度。可显式新建批次，旧账本保留。查询与批次创建无需 Key；只有生成需要 Key。
 
-生成时可同时加 `--revise-skill '已发布版本ID' --revision-reason '修订原因'`，绑定同项目可用父版本和原内容摘要；缺少已发布版本时拒绝生成。发布、试用和批准入口由后续功能交付，当前候选不能启用；`--yes` 不适用于技能命令。
+生成时可同时加 `--revise-skill '已发布版本ID' --revision-reason '修订原因'`，绑定同项目可用父版本和原内容摘要；缺少已发布版本时拒绝生成。生成候选本身不会启用；`--yes` 不适用于技能命令。
 
 ### 指定候选的隔离开发试用
 
@@ -150,7 +150,7 @@ java -jar $agentJar --root E:/repair-v2-work --skill-trials --trial-control E:/r
 java -jar $agentJar --root E:/repair-v2-work --skill-trial '试用ID' --trial-control E:/repair-v2-control
 ```
 
-路径须规范、绝对且相互隔离。只接受冻结清单中的初始开发、反馈开发或必要回归输入，拒绝正式场景、旧 `.agent`、构建产物、输入变动或不足的批次额度。归档核验沿原项目身份检查真实任务、失败、修复意图/结果、文件版本链和验收，不能仅凭有效标志加载知识。来源归档的任务/经验视图禁止写入；只有可信控制层可追加批次账本。
+路径须规范、绝对且相互隔离。只接受冻结清单中的初始开发、反馈开发或必要回归输入，拒绝正式场景、旧 `.agent`、构建产物、输入变动或不足的批次额度。归档核验沿原项目身份检查真实任务、失败、修复意图/结果、文件版本链和验收，不能仅凭有效标志加载知识。来源归档的任务/经验视图禁止写入；可信控制层可在核验项目身份后写入技能候选、审核、版本和批次元数据。
 
 独立失败基线可用后，指定候选的精简目录进入原任务反馈。Agent 可不选，或调用 `load_skill`，用目录中的 ID 与完整 SHA-256 快照版本取得完整流程；错误 ID/版本、任意路径、重复全文加载被拒绝或去重。读取后可用 `declare_skill` 声明 ACCEPT/REJECT 和原因；未读取、读取但未声明、声明采纳、声明拒绝分别记录。模型声明不能代替实际操作或独立验收。
 
@@ -222,6 +222,32 @@ java -jar $agentJar --root $projectRoot --resume-task <任务ID>
 ```
 
 提高额度本身不会调用模型或执行命令，也不会清空累计消耗。
+
+### 正反例审核与不可变版本发布
+
+候选发布需要同一候选摘要、冻结开发清单及模型/调用配置下的两项试用：相关新缺陷通过独立验收；不适用反例加载后明确拒绝错误步骤，正常修复并通过验收。失败、未知、缺记录或未实际加载的试用不能过关。反例判据来自试用前冻结的外部清单，不使用模型裁判。
+
+来源归档也是本项目的技能库。以下命令的工作根、控制根和来源根沿用上节，来源根始终指向最初保存候选的归档，不随每次开发重置而改选：
+
+```powershell
+$library = @('--root', 'E:/repair-v2-work', '--trial-control', 'E:/repair-v2-control',
+             '--trial-source', 'E:/repair-v2-control/history/来源归档ID/workspace')
+java -jar $agentJar @library --skill-review '候选ID' --skill-digest '完整候选摘要' `
+  --related-trial '相关试用ID' --counterexample-trial '反例试用ID'
+java -jar $agentJar --root E:/repair-v2-work --trial-control E:/repair-v2-control `
+  --attest-skill-trial '反例试用ID' --review-note '逐项核对冻结判据、拒绝声明和实际修改后的具体结论'
+java -jar $agentJar @library --approve-skill '候选ID' --skill-digest '完整候选摘要' `
+  --related-trial '相关试用ID' --counterexample-trial '反例试用ID'
+java -jar $agentJar @library --skill-versions
+java -jar $agentJar @library --skill-version '版本ID'
+java -jar $agentJar @library --reject-skill '其他候选ID' --skill-digest '该候选完整摘要' --review-note '拒绝原因'
+```
+
+查看会展示完整指南、前后字段差异、来源、冻结反例判据、模型声明、全部操作参数和文件变化、独立验收、请求审计和已知/未知消耗。操作者须核验实际轨迹没有执行被拒绝的错误步骤，不能只看一句 REJECT 或最终通过；核验需要输入打印出的 `attest 试用ID 候选摘要 证据摘要`。随后发布还需另行输入 `approve 候选ID 候选摘要`。只有真实交互终端接受这些确认，管道、EOF、`--yes` 和查看操作不能替代批准。人工核验不自动触发发布。
+
+审核期间会重新检查候选、来源及试用证据；变化使旧核验失效。拒绝保留记录且不改变来源任务的 Verified。批准后保存不可变 Markdown、版本及批准依据；最终版本文件原子写入前都不可用。新版保留技能身份、父版本和修订原因，成为未来任务的默认版本，旧版不自动删除或失效。直接改写内容或破坏审批证据会被拒绝。当前普通管理任务尚未接入已发布技能发现与加载，隔离试用仍需显式指定候选。
+
+所有审核、核验、批准、拒绝和版本查询均无需 Key，不运行模型或验收。可用同一组 `@library` 参数执行 `--skill-candidate`、`--skill-candidates`、`--skill-batch`、`--skill-batches`、`--start-skill-batch` 和 `--generate-skill`；修订仍需显式有界批次和模型授权，新候选必须重新完成试用和审核。
 
 ## 审批与异常处理
 

@@ -12,6 +12,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @Test void shouldParsePublicationAndArchivedLibraryCommandsWithoutModelOptions() {
+        var approval = SkillCommands.parse(new String[]{"--approve-skill", "candidate", "--skill-digest", "digest",
+                "--related-trial", "positive", "--counterexample-trial", "negative", "--trial-control", "E:/control", "--trial-source", "E:/source"});
+        assertEquals("APPROVE", approval.action().name());
+        assertEquals("positive", approval.review().related());
+        assertEquals("digest", approval.review().sha256());
+        assertEquals("ATTEST", SkillCommands.parse(new String[]{"--attest-skill-trial", "negative", "--trial-control", "E:/control", "--review-note", "checked actions"}).action().name());
+        assertEquals("VERSIONS", SkillCommands.parse(new String[]{"--skill-versions", "--trial-control", "E:/control", "--trial-source", "E:/source"}).action().name());
+        assertEquals(Path.of("E:/source"), SkillCommands.parse(new String[]{"--start-skill-batch", "--request-limit", "8", "--trial-control", "E:/control", "--trial-source", "E:/source"}).librarySource());
+    }
+    @Test void shouldRejectAmbiguousOrAutomaticPublicationArguments() {
+        for (String[] args : new String[][] {
+                {"--approve-skill", "c"}, {"--skill-versions"}, {"--attest-skill-trial", "n", "--trial-control", "E:/c"},
+                {"--reject-skill", "c", "--trial-control", "E:/a", "--trial-source", "E:/s", "--skill-digest", "h", "--review-note", "bad", "--yes"},
+                {"--skill-versions", "--trial-control", "E:/a", "--trial-source", "E:/s", "--skill-digest", "h"},
+                {"--skill-review", "c", "--trial-control", "E:/a", "--trial-source", "E:/s", "--skill-digest", "h", "--related-trial", "p"},
+                {"--skill-candidates", "--trial-control", "E:/a"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> SkillCommands.parse(args));
+        }
+    }
     @org.junit.jupiter.api.Test void shouldParseExplicitCandidateTrialAndReadOnlyQueries() {
         var trial = SkillCommands.parse(new String[]{"--trial-skill", "candidate", "--skill-batch", "batch",
                 "--trial-control", "E:/control", "--trial-source", "E:/control/history/source/workspace",

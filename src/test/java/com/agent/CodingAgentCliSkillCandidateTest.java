@@ -201,7 +201,7 @@ class CodingAgentCliSkillCandidateTest {
         assertEquals(4, cli(null, "").showSkillCandidate(candidate), text());
     }
 
-    @Test void shouldKeepIdenticalSuggestionsSeparateAndBindRevisionToPublishedParent() throws Exception {
+    @Test void shouldKeepIdenticalSuggestionsSeparateAndRejectUnreviewedParent() throws Exception {
         String experience = experience();
         String batch = batch(3);
         var model = new FakeLLMClient(List.of(new LLMResponse(GUIDE, null, 1, 1), new LLMResponse(GUIDE, null, 1, 1),
@@ -211,7 +211,7 @@ class CodingAgentCliSkillCandidateTest {
         output.reset();
         assertEquals(0, cli(model, "").generateSkillCandidate(batch, List.of(experience), null, null), text());
         assertNotEquals(first, id("技能候选"));
-        // 发布是后续票据；此夹具提供已批准父版本，来源仍来自上面的完整真实离线任务链。
+        // 旧占位版本没有真实审核记录，不能伪装成已发布父版本。
         var store = new com.agent.skill.SkillStore(root);
         var parentCandidate = store.candidate(first);
         String parent = java.util.UUID.randomUUID().toString();
@@ -225,12 +225,9 @@ class CodingAgentCliSkillCandidateTest {
         Files.createDirectories(file.getParent());
         Files.write(file, json.writeValueAsBytes(wrapper));
         output.reset();
-        assertEquals(0, cli(model, "").generateSkillCandidate(batch, List.of(experience), parent, "补充边界限制"), text());
-        assertTrue(text().contains(parentCandidate.skillId()), text());
-        assertTrue(text().contains(parent), text());
-        assertTrue(text().contains("补充边界限制"), text());
-        assertTrue(model.requests().get(2).toString().contains("父内容"));
-        assertEquals(0, cli(null, "").showSkillCandidate(id("技能候选")), text());
+        assertEquals(4, cli(model, "").generateSkillCandidate(batch, List.of(experience), parent, "补充边界限制"), text());
+        assertTrue(text().contains("未完整批准"), text());
+        assertEquals(2, model.callCount());
     }
 
     @Test void shouldKeepLedgerWhenCandidatePersistenceFailsAndRefuseToClaimSuccess() throws Exception {

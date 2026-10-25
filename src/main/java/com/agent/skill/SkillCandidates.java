@@ -14,14 +14,24 @@ public final class SkillCandidates {
     private final Path root;
     private final SkillStore store;
     private final PrintStream out;
+    private final Path libraryRoot, control;
     public SkillCandidates(Path root, PrintStream out) throws IOException {
+        this(root, out, null, null);
+    }
+    public SkillCandidates(Path root, PrintStream out, Path control, Path source) throws IOException {
         this.root = root.toRealPath();
-        this.store = new SkillStore(root);
+        if ((control == null) != (source == null)) { throw new IOException("归档技能库需同时指定控制与来源路径"); }
+        this.control = control; this.libraryRoot = source == null ? this.root : source;
+        this.store = source == null ? new SkillStore(root) : new SkillTrials(root, out).library(control, source);
         this.out = out;
+    }
+    private void checkLibrary() throws IOException {
+        if (control != null) { new SkillTrials(root, out).library(control, libraryRoot); }
     }
     public void startBatch(int limit) throws IOException {
         if (limit <= 0) { throw new IOException("批次必须有明确正整数累计请求上限"); }
-        try (var lock = new TaskStore(root).lock()) {
+        checkLibrary();
+        try (var lock = new TaskStore(libraryRoot).lock()) {
             var batch = new SkillBatch();
             batch.id = UUID.randomUUID().toString();
             batch.project = store.project();
@@ -36,7 +46,8 @@ public final class SkillCandidates {
         if ((parentId == null) != (reason == null) || reason != null && (reason.isBlank() || reason.length() > 4000)) {
             throw new IOException("修订必须同时提供父版本与非空修订原因");
         }
-        try (var lock = new TaskStore(root).lock()) {
+        checkLibrary();
+        try (var lock = new TaskStore(libraryRoot).lock()) {
             var batch = store.batch(batchId);
             if (batch.requests.size() >= batch.limit) { printBatch(batch, out); out.println("批次额度耗尽，已暂停；不自动扩额或重试"); return false; }
             var sources = store.sources(sourceIds);
@@ -72,6 +83,7 @@ public final class SkillCandidates {
                 }
                 var guide = SkillStore.parseGuide(response.content());
                 SkillStore.validateGuide(guide);
+                checkLibrary();
                 if (!sources.equals(store.sources(sourceIds)) || parent != null && !parent.equals(store.parent(parentId))) {
                     throw new IOException("生成期间来源或父版本改变，候选未保存");
                 }
@@ -102,7 +114,9 @@ public final class SkillCandidates {
                 + "\n批次: " + candidate.batchId() + "\n" + candidate.guide().markdown());
         for (var source : candidate.sources()) {
             out.println("来源经验: " + source.experience().id() + "\n来源摘要: " + source.sha256());
-            new com.agent.experience.ExperienceLibrary(root).print(source.experience(), out);
+            var library = control == null ? new com.agent.experience.ExperienceLibrary(root)
+                    : com.agent.experience.ExperienceLibrary.readOnlyArchive(libraryRoot, root);
+            library.print(source.experience(), out);
         }
     }
     public void listCandidates() throws IOException {

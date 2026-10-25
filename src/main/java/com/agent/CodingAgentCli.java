@@ -277,20 +277,55 @@ public class CodingAgentCli {
         try { new com.agent.skill.SkillTrials(root, out).list(control); return 0; }
         catch (IOException failed) { err.println("试用查询失败: " + failed.getMessage()); return 4; }
     }
+    public int reviewSkill(com.agent.skill.SkillReviews.Selection selection) {
+        try { new com.agent.skill.SkillReviews(root, out).review(selection); return 0; }
+        catch (IOException failed) { err.println("技能审核失败: " + failed.getMessage()); return 4; }
+    }
+    public int approveSkill(com.agent.skill.SkillReviews.Selection selection, boolean interactive) {
+        try { return new com.agent.skill.SkillReviews(root, out).approve(selection, in, interactive) ? 0 : 1; }
+        catch (IOException failed) { err.println("技能发布失败: " + failed.getMessage()); return 4; }
+    }
+    public int attestSkillTrial(Path control, String id, String note, boolean interactive) {
+        try { return new com.agent.skill.SkillReviews(root, out).attest(control, id, note, in, interactive) ? 0 : 1; }
+        catch (IOException failed) { err.println("反例人工核验失败: " + failed.getMessage()); return 4; }
+    }
+    public int rejectSkill(Path control, Path source, String id, String sha256, String reason, boolean interactive) {
+        try { return new com.agent.skill.SkillReviews(root, out).reject(control, source, id, sha256, reason, in, interactive) ? 0 : 1; }
+        catch (IOException failed) { err.println("技能拒绝失败: " + failed.getMessage()); return 4; }
+    }
+    public int showSkillVersion(Path control, Path source, String id) { return skillVersions(control, source, id); }
+    public int listSkillVersions(Path control, Path source) { return skillVersions(control, source, null); }
+    private int skillVersions(Path control, Path source, String id) {
+        try { new com.agent.skill.SkillReviews(root, out).versions(control, source, id); return 0; }
+        catch (IOException failed) { err.println("技能版本查询失败: " + failed.getMessage()); return 4; }
+    }
     public int startSkillBatch(int limit) { return skillOperation(skills -> skills.startBatch(limit)); }
+    public int startSkillBatch(Path control, Path source, int limit) {
+        return skillOperation(control, source, skills -> skills.startBatch(limit));
+    }
     public int generateSkillCandidate(String batch, java.util.List<String> sources, String parent, String reason) {
-        try { return new com.agent.skill.SkillCandidates(root, out).generate(batch, sources, parent, reason, client) ? 0 : 1; }
+        return generateSkillCandidate(null, null, batch, sources, parent, reason);
+    }
+    public int generateSkillCandidate(Path control, Path source, String batch, java.util.List<String> sources, String parent, String reason) {
+        try { return new com.agent.skill.SkillCandidates(root, out, control, source).generate(batch, sources, parent, reason, client) ? 0 : 1; }
         catch (IOException failed) { err.println("技能生成失败: " + failed.getMessage()); return 4; }
     }
     public int listSkillCandidates() { return skillOperation(com.agent.skill.SkillCandidates::listCandidates); }
     public int showSkillCandidate(String id) { return skillOperation(skills -> skills.showCandidate(id)); }
     public int listSkillBatches() { return skillOperation(com.agent.skill.SkillCandidates::listBatches); }
     public int showSkillBatch(String id) { return skillOperation(skills -> skills.showBatch(id)); }
+    public int listSkillCandidates(Path control, Path source) { return skillOperation(control, source, com.agent.skill.SkillCandidates::listCandidates); }
+    public int showSkillCandidate(Path control, Path source, String id) { return skillOperation(control, source, skills -> skills.showCandidate(id)); }
+    public int listSkillBatches(Path control, Path source) { return skillOperation(control, source, com.agent.skill.SkillCandidates::listBatches); }
+    public int showSkillBatch(Path control, Path source, String id) { return skillOperation(control, source, skills -> skills.showBatch(id)); }
     @FunctionalInterface private interface SkillOperation {
         void run(com.agent.skill.SkillCandidates skills) throws IOException;
     }
     private int skillOperation(SkillOperation operation) {
-        try { operation.run(new com.agent.skill.SkillCandidates(root, out)); return 0; }
+        return skillOperation(null, null, operation);
+    }
+    private int skillOperation(Path control, Path source, SkillOperation operation) {
+        try { operation.run(new com.agent.skill.SkillCandidates(root, out, control, source)); return 0; }
         catch (IOException failed) { err.println("技能操作失败: " + failed.getMessage()); return 4; }
     }
 

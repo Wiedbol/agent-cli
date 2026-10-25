@@ -20,10 +20,18 @@ public final class SkillStore {
     private final Path root;
     private final Path directory;
     private final Path originalProject;
+    private boolean libraryWriter;
 
-    /** 后续发布操作的持久化契约；此处只有读取能力，不提供批准或启用入口。 */
+    /** 批准引用独立审核记录；版本文件最后原子写入，才代表发布已完成。 */
     public record Version(int schemaVersion, String id, String skillId, String project,
-                          String candidateId, String candidateSha256, long approvedAt, boolean enabled) { }
+                          String candidateId, String candidateSha256, long approvedAt, boolean enabled,
+                          String reviewId, String reviewSha256) {
+        public Version(int schemaVersion, String id, String skillId, String project, String candidateId,
+                       String candidateSha256, long approvedAt, boolean enabled) {
+            this(schemaVersion, id, skillId, project, candidateId, candidateSha256, approvedAt, enabled, null, null);
+        }
+    }
+    private final Set<String> readingVersions = new HashSet<>();
 
     public SkillStore(Path root) throws IOException {
         this(root, null);
@@ -33,6 +41,11 @@ public final class SkillStore {
             throw new IOException("来源归档需要规范绝对路径");
         }
         return new SkillStore(archive, originalProject.toRealPath());
+    }
+    static SkillStore library(Path archive, Path originalProject) throws IOException {
+        var store = archived(archive, originalProject);
+        store.libraryWriter = true;
+        return store;
     }
     private SkillStore(Path root, Path originalProject) throws IOException {
         this.root = root.toRealPath();
@@ -75,7 +88,7 @@ public final class SkillStore {
             requireSafe(text);
         }
     }
-    private <T> T read(String group, String id, Class<T> type) throws IOException {
+    <T> T read(String group, String id, Class<T> type) throws IOException {
         var wrapper = JSON.readTree(Files.readAllBytes(path(group, id, ".json")));
         if (wrapper == null || !wrapper.hasNonNull("value")
                 || !digest(wrapper.get("value")).equals(wrapper.path("sha256").asText())) {
@@ -116,11 +129,24 @@ public final class SkillStore {
         wrapper.put("sha256", digest(value));
         atomic(path(group, id, ".json"), JSON.writeValueAsBytes(wrapper));
     }
+    void writeNew(String group, String id, Object value) throws IOException {
+        var wrapper = JSON.createObjectNode();
+        wrapper.set("value", JSON.valueToTree(value)); wrapper.put("sha256", digest(value));
+        atomic(path(group, id, ".json"), JSON.writeValueAsBytes(wrapper), false);
+    }
+    void versionMarkdown(String id, String markdown) throws IOException {
+        atomic(path("versions", id, ".md"), markdown.getBytes(StandardCharsets.UTF_8), false);
+    }
+    boolean exists(String group, String id) throws IOException { return Files.exists(path(group, id, ".json"), LinkOption.NOFOLLOW_LINKS); }
     private void atomic(Path path, byte[] bytes) throws IOException {
-        if (originalProject != null && !path.getParent().equals(directory.resolve("batches"))) {
+        atomic(path, bytes, true);
+    }
+    private void atomic(Path path, byte[] bytes, boolean replace) throws IOException {
+        if (originalProject != null && !libraryWriter && !path.getParent().equals(directory.resolve("batches"))) {
             throw new IOException("来源归档只允许追加受控批次账本，不写知识或任务证据");
         }
         check(path);
+        if (!replace && Files.exists(path, LinkOption.NOFOLLOW_LINKS)) { throw new IOException("不可变技能记录已存在，拒绝覆盖"); }
         Files.createDirectories(path.getParent());
         check(path);
         Path temporary = Files.createTempFile(path.getParent(), "skill-", ".tmp");
@@ -130,7 +156,8 @@ public final class SkillStore {
                 while (buffer.hasRemaining()) { channel.write(buffer); }
                 channel.force(true);
             }
-            Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            if (replace) { Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
+            else { Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE); }
         } finally { Files.deleteIfExists(temporary); }
     }
     List<String> ids(String group) throws IOException {
@@ -225,14 +252,34 @@ public final class SkillStore {
         return candidate;
     }
     SkillCandidate.Parent parent(String id) throws IOException {
-        var version = read("versions", id, Version.class);
-        if (version.schemaVersion() != 1 || !id.equals(version.id()) || !project().equals(version.project())
-                || version.approvedAt() <= 0 || !version.enabled()) { throw new IOException("父技能版本未批准、不可用或跨项目"); }
-        var candidate = candidate(version.candidateId());
-        if (!candidate.skillId().equals(version.skillId()) || !digest(candidate).equals(version.candidateSha256())) {
-            throw new IOException("父版本与批准内容不一致");
-        }
+        var version = version(id);
         return new SkillCandidate.Parent(version.skillId(), id, digest(version));
+    }
+    public Version version(String id) throws IOException {
+        if (!readingVersions.add(id) || readingVersions.size() > 32) { throw new IOException("技能版本父链循环或过长"); }
+        try {
+            var version = read("versions", id, Version.class);
+            if (version.schemaVersion() != 2 || !id.equals(version.id()) || !project().equals(version.project())
+                    || version.approvedAt() <= 0 || !version.enabled() || version.reviewId() == null || version.reviewSha256() == null) {
+                throw new IOException("技能版本未完整批准、不可用或跨项目");
+            }
+            var candidate = candidate(version.candidateId());
+            if (!candidate.skillId().equals(version.skillId()) || !digest(candidate).equals(version.candidateSha256())
+                    || !candidate.guide().markdown().equals(Files.readString(path("versions", id, ".md")))) {
+                throw new IOException("版本与批准内容不一致或 Markdown 已被改写");
+            }
+            var publication = read("reviews", version.reviewId(), SkillReviews.Publication.class);
+            if (publication.schemaVersion() != 1 || !version.reviewId().equals(publication.id()) || !project().equals(publication.project())
+                    || publication.selection() == null || publication.attestation() == null || publication.selection().control() == null
+                    || publication.selection().source() == null || !digest(publication).equals(version.reviewSha256()) || !id.equals(publication.versionId())
+                    || !version.candidateId().equals(publication.selection().candidate())
+                    || !version.candidateSha256().equals(publication.selection().sha256()) || version.approvedAt() != publication.at()) {
+                throw new IOException("版本批准记录不符");
+            }
+            new SkillReviews(originalProject == null ? root : originalProject, new java.io.PrintStream(java.io.OutputStream.nullOutputStream()))
+                    .checkPublication(publication, candidate);
+            return version;
+        } finally { readingVersions.remove(id); }
     }
     SkillCandidate.Guide parentGuide(String id) throws IOException {
         parent(id);

@@ -49,6 +49,17 @@ public final class SkillTrials {
         SkillStore.requireId(marker.path("projectId").asText());
         return marker;
     }
+    SkillStore library(Path control, Path source) throws IOException {
+        canonical(control); canonical(source);
+        var marker = identity(control);
+        if (!source.getFileName().toString().equals("workspace") || source.getParent() == null
+                || !control.resolve("history").equals(source.getParent().getParent())
+                || !marker.equals(read(source.resolve(".repair-lab-workspace.json")))) {
+            throw new IOException("技能库必须是同项目可信来源归档");
+        }
+        SkillStore.requireId(source.getParent().getFileName().toString());
+        return SkillStore.library(source, root);
+    }
     private SkillTrial prepare(Config config) throws IOException {
         if (config.requests() <= 0 || config.model() == null || config.model().isBlank()
                 || config.endpoint() == null || config.endpoint().isBlank()) { throw new IOException("试用必须冻结模型与明确正数任务额度"); }
@@ -219,7 +230,7 @@ public final class SkillTrials {
         Files.move(staging, destination, StandardCopyOption.ATOMIC_MOVE);
         record.reason = task.reason;
     }
-    private SkillTrial readTrial(Path control, String id) throws IOException {
+    SkillTrial readTrial(Path control, String id) throws IOException {
         var wrapper = read(directory(control, id).resolve("state.json"));
         if (wrapper == null || !wrapper.hasNonNull("value") || !SkillStore.digest(wrapper.get("value")).equals(wrapper.path("sha256").asText())) {
             throw new IOException("试用审计完整性校验失败");
@@ -227,9 +238,13 @@ public final class SkillTrials {
         var record = SkillStore.JSON.treeToValue(wrapper.get("value"), SkillTrial.class);
         if (record.schemaVersion != 1 || !id.equals(record.id) || !root.toString().replace('\\', '/').equals(record.project)
                 || !control.toString().equals(record.control) || record.requests == null || record.events == null
+                || record.source == null || record.catalog == null || record.projectId == null || record.configuration == null
+                || record.initial == null || record.acceptance == null || record.status == null
+                || !Set.of("PREPARED", "RUNNING", "VERIFIED", "PAUSED", "ERROR", "UNKNOWN").contains(record.status)
                 || record.maxRequests <= 0 || record.requests.size() > record.maxRequests) { throw new IOException("试用记录损坏或属于其他项目"); }
         var batch = SkillStore.archived(Path.of(record.source), root).batch(record.batchId);
         for (var request : record.requests) {
+            if (request == null || request.id == null || request.messages == null || request.tools == null) { throw new IOException("试用请求审计字段缺失"); }
             var entry = batch.requests.stream().filter(r -> r.id.equals(request.id)).findFirst()
                     .orElseThrow(() -> new IOException("试用请求缺少批次预留"));
             if (!id.equals(entry.trialId) || !Objects.equals(record.taskId, entry.taskId)
@@ -295,7 +310,7 @@ public final class SkillTrials {
             }
         }
     }
-    private TaskStore evidenceStore(SkillTrial record) throws IOException {
+    TaskStore evidenceStore(SkillTrial record) throws IOException {
         Path archived = directory(Path.of(record.control), record.id).resolve("result-root");
         if (Files.exists(archived)) {
             try {
