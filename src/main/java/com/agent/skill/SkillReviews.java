@@ -149,7 +149,7 @@ public final class SkillReviews {
             var store = trials.library(control, source);
             if (!SkillStore.digest(store.candidate(id)).equals(sha256)) { throw new IOException("待拒绝候选摘要不符"); }
             for (String version : store.ids("versions")) {
-                if (store.version(version).candidateId().equals(id)) { throw new IOException("已发布候选不能通过拒绝改写版本历史"); }
+                if (store.historicalSnapshot(version).version().candidateId().equals(id)) { throw new IOException("已发布候选不能通过拒绝改写版本历史"); }
             }
             out.println("拒绝原因: " + reason + "\n请输入 reject " + id + " " + sha256); out.flush();
             if (!("reject " + id + " " + sha256).equals(input.readLine())) { out.println("未确认拒绝"); return false; }
@@ -166,7 +166,7 @@ public final class SkillReviews {
             if (!review.store().exists("attestations", selection.counterexample())) { throw new IOException("缺少反例人工核验"); }
             var attestation = attestation(review);
             for (String id : review.store().ids("versions")) {
-                if (review.store().version(id).candidateId().equals(selection.candidate())) { throw new IOException("该候选已经发布，拒绝重复批准"); }
+                if (review.store().historicalSnapshot(id).version().candidateId().equals(selection.candidate())) { throw new IOException("该候选已经发布，拒绝重复批准"); }
             }
             review(selection);
             out.println("以上包含全部轨迹和限制；批准不代表技能因果收益。请输入 approve " + selection.candidate() + " " + selection.sha256());
@@ -178,7 +178,7 @@ public final class SkillReviews {
             if (!current.related().sha256().equals(review.related().sha256()) || !current.counterexample().sha256().equals(review.counterexample().sha256())
                     || !attestation.equals(attestation(current))) { throw new IOException("确认期间审核证据变化，未发布"); }
             long at = System.currentTimeMillis();
-            for (String id : current.store().ids("versions")) { at = Math.max(at, current.store().version(id).approvedAt() + 1); }
+            for (String id : current.store().ids("versions")) { at = Math.max(at, current.store().historicalSnapshot(id).version().approvedAt() + 1); }
             String versionId = UUID.randomUUID().toString(), reviewId = UUID.randomUUID().toString();
             var publication = new Publication(1, reviewId, current.store().project(), selection, versionId,
                     current.related().sha256(), current.counterexample().sha256(), attestation, at);
@@ -244,12 +244,43 @@ public final class SkillReviews {
         if (!current.related().sha256().equals(publication.relatedSha256()) || !current.counterexample().sha256().equals(publication.counterexampleSha256())
                 || !attestation(current).equals(publication.attestation())) { throw new IOException("批准所依据的试用或人工核验已改变"); }
     }
+    /** 可用性变更另存历史；恢复只认可同一批准内容，不能借此换版或补造证据。 */
+    public boolean setEnabled(Path control, Path source, String id, String sha256, boolean enabled, String reason,
+                              BufferedReader input, boolean interactive) throws IOException {
+        if (!interactive) { out.println("技能可用性变更需要交互确认；--yes 不适用"); return false; }
+        if (reason == null || reason.isBlank() || reason.length() > 2000) { throw new IOException("技能可用性变更需要具体原因"); }
+        SkillStore.requireSafe(reason);
+        trials.library(control, source);
+        try (var writer = new TaskStore(source).lock()) {
+            var store = trials.library(control, source);
+            var version = store.metadata(id).version();
+            if (!SkillStore.digest(version).equals(sha256)) { throw new IOException("待变更版本摘要不符"); }
+            var previous = store.availability(version);
+            if (enabled) { store.historicalSnapshot(id); }
+            String action = enabled ? "enable" : "disable";
+            out.println("技能版本: " + id + "\n版本摘要: " + sha256 + "\n原因: " + reason + "\n请输入 " + action + " " + id + " " + sha256);
+            out.flush();
+            if (!(action + " " + id + " " + sha256).equals(input.readLine())) { out.println("未确认可用性变更"); return false; }
+            version = store.metadata(id).version();
+            if (!SkillStore.digest(version).equals(sha256) || !previous.equals(store.availability(version))) {
+                throw new IOException("确认期间版本或可用性历史变化");
+            }
+            if (enabled) { store.historicalSnapshot(id); }
+            store.availability(version, enabled, reason);
+            out.println(enabled ? "原版已启用；任务仍需显式恢复并检查适用性" : "版本已停用；保留批准内容、来源和历史，不自动切换旧版");
+            return true;
+        }
+    }
     public void versions(Path control, Path source, String selected) throws IOException {
         var store = trials.library(control, source);
         var versions = new ArrayList<SkillStore.Version>();
         boolean unavailable = false;
         for (String id : store.ids("versions")) {
-            try { versions.add(store.version(id)); }
+            try {
+                var version = store.historicalSnapshot(id).version();
+                store.availability(version);
+                versions.add(version);
+            }
             catch (IOException invalid) {
                 if (id.equals(selected)) { throw invalid; }
                 unavailable = true;
@@ -261,8 +292,11 @@ public final class SkillReviews {
         for (var version : versions) {
             if (selected != null && !selected.equals(version.id())) { continue; }
             boolean latest = versions.stream().filter(v -> v.skillId().equals(version.skillId())).noneMatch(v -> v.approvedAt() > version.approvedAt());
-            String defaultState = latest && unavailable ? "未知（其他版本不可用，不自动回退默认）" : Boolean.toString(latest);
+            var availability = store.availability(version);
+            String defaultState = latest && unavailable ? "未知（其他版本不可用，不自动回退默认）" : Boolean.toString(latest && availability.enabled());
             out.println("技能版本: " + version.id() + "\n技能: " + version.skillId() + "\n默认: " + defaultState
+                    + "\n版本摘要: " + SkillStore.digest(version) + "\n可用性: " + (availability.enabled() ? "已启用" : "已停用")
+                    + "\n可用性历史: " + SkillStore.JSON.writeValueAsString(availability.changes())
                     + "\n候选: " + version.candidateId() + "@" + version.candidateSha256() + "\n批准记录: "
                     + SkillStore.JSON.writeValueAsString(store.read("reviews", version.reviewId(), Publication.class)));
             var candidate = store.candidate(version.candidateId());

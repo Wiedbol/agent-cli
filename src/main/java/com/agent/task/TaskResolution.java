@@ -125,7 +125,7 @@ public final class TaskResolution {
                 task.checkpoint.acceptanceProcessed = false;
             } else { decision.operations.set(decision.operations.indexOf(original), retry); }
             task.files = current;
-            task.schemaVersion = 5;
+            task.schemaVersion = Math.max(task.schemaVersion, 5);
             return pause(store, task, "已批准新操作 " + retry.operationId + "，原操作结果不明；请显式 --resume-task 执行，之后重新验收");
         }
     }

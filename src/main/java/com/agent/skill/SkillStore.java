@@ -252,10 +252,66 @@ public final class SkillStore {
         return candidate;
     }
     SkillCandidate.Parent parent(String id) throws IOException {
-        var version = version(id);
+        var version = historicalSnapshot(id).version();
         return new SkillCandidate.Parent(version.skillId(), id, digest(version));
     }
     public record Snapshot(Version version, SkillCandidate candidate) { }
+    public record AvailabilityChange(boolean enabled, String reason, long at) { }
+    record AvailabilityBinding(int schemaVersion, String id, String project, String versionSha256) { }
+    public record Availability(int schemaVersion, String id, String project, String versionSha256,
+                               List<AvailabilityChange> changes) {
+        public boolean enabled() { return changes.isEmpty() || changes.get(changes.size() - 1).enabled(); }
+    }
+    Availability availability(Version version) throws IOException {
+        String group = "availability/" + version.id();
+        Path marker = directory.resolve(group);
+        check(marker);
+        Path parent = marker.getParent();
+        if (Files.exists(parent, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(marker, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(marker, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("技能可用性目录损坏");
+        }
+        boolean bound = exists("availability-bindings", version.id());
+        boolean present = Files.exists(marker, LinkOption.NOFOLLOW_LINKS);
+        if (!bound && !present) {
+            return new Availability(1, version.id(), project(), digest(version), List.of());
+        }
+        // 格式绑定独立于状态目录；目录或绑定任一丢失都不能降格成旧版默认启用。
+        if (!bound || !present) { throw new IOException("受管技能可用性绑定或状态目录缺失"); }
+        var binding = read("availability-bindings", version.id(), AvailabilityBinding.class);
+        if (binding.schemaVersion() != 1 || !version.id().equals(binding.id()) || !project().equals(binding.project())
+                || !digest(version).equals(binding.versionSha256())) { throw new IOException("技能可用性绑定与批准版本不符"); }
+        var raw = JSON.readTree(Files.readAllBytes(path(group, version.id(), ".json")));
+        if (raw == null || !raw.isObject()) { throw new IOException("技能可用性记录损坏"); }
+        var value = raw.path("value");
+        if (!value.path("changes").isArray()) { throw new IOException("技能可用性历史缺失"); }
+        for (var change : value.path("changes")) {
+            if (!change.path("enabled").isBoolean() || !change.path("reason").isTextual() || !change.path("at").isIntegralNumber()) {
+                throw new IOException("技能可用性历史字段损坏");
+            }
+        }
+        var state = read(group, version.id(), Availability.class);
+        if (state.schemaVersion() != 1 || !version.id().equals(state.id()) || !project().equals(state.project())
+                || !digest(version).equals(state.versionSha256()) || state.changes() == null || state.changes().isEmpty()) {
+            throw new IOException("技能可用性记录与批准版本不符");
+        }
+        for (var change : state.changes()) {
+            if (change.reason() == null || change.reason().isBlank() || change.reason().length() > 2000 || change.at() <= 0) {
+                throw new IOException("技能可用性历史不合法");
+            }
+            requireSafe(change.reason());
+        }
+        return state;
+    }
+    void availability(Version version, boolean enabled, String reason) throws IOException {
+        var previous = availability(version);
+        var changes = new ArrayList<>(previous.changes());
+        changes.add(new AvailabilityChange(enabled, reason, System.currentTimeMillis()));
+        if (!exists("availability-bindings", version.id())) {
+            writeNew("availability-bindings", version.id(), new AvailabilityBinding(1, version.id(), project(), digest(version)));
+        }
+        write("availability/" + version.id(), version.id(), new Availability(1, version.id(), project(), digest(version), List.copyOf(changes)));
+    }
     record Approval(Version version, SkillReviews.Publication publication) { }
     Approval metadata(String id) throws IOException {
         var version = read("versions", id, Version.class);
@@ -276,10 +332,15 @@ public final class SkillStore {
     }
     public Version version(String id) throws IOException { return snapshot(id).version(); }
     public Snapshot snapshot(String id) throws IOException {
+        return snapshot(id, true);
+    }
+    Snapshot historicalSnapshot(String id) throws IOException { return snapshot(id, false); }
+    private Snapshot snapshot(String id, boolean active) throws IOException {
         if (!readingVersions.add(id) || readingVersions.size() > 32) { throw new IOException("技能版本父链循环或过长"); }
         try {
             var approval = metadata(id); var version = approval.version();
             if (!version.enabled()) { throw new IOException("技能版本不可用"); }
+            if (active && !availability(version).enabled()) { throw new IOException("技能版本已停用: " + id); }
             var candidate = candidate(version.candidateId());
             if (!candidate.skillId().equals(version.skillId()) || !digest(candidate).equals(version.candidateSha256())
                     || !candidate.guide().markdown().equals(Files.readString(path("versions", id, ".md")))) {

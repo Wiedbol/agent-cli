@@ -300,6 +300,10 @@ public class CodingAgentCli {
         catch (IOException failed) { err.println("技能拒绝失败: " + failed.getMessage()); return 4; }
     }
     public int showSkillVersion(Path control, Path source, String id) { return skillVersions(control, source, id); }
+    public int setSkillEnabled(Path control, Path source, String id, String sha256, boolean enabled, String reason, boolean interactive) {
+        try { return new com.agent.skill.SkillReviews(root, out).setEnabled(control, source, id, sha256, enabled, reason, in, interactive) ? 0 : 1; }
+        catch (IOException failure) { err.println("技能可用性变更失败: " + failure.getMessage()); return 4; }
+    }
     public int listSkillVersions(Path control, Path source) { return skillVersions(control, source, null); }
     private int skillVersions(Path control, Path source, String id) {
         try { new com.agent.skill.SkillReviews(root, out).versions(control, source, id); return 0; }
@@ -403,10 +407,8 @@ public class CodingAgentCli {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
             var saved = new TaskStore(root).read(id);
-            var state = saved.skills;
             com.agent.skill.SkillKnowledge knowledge = saved.knowledgeMode == KnowledgeMode.SKILL
-                    ? new com.agent.skill.PublishedSkills(root, out, state == null || state.control == null ? null : Path.of(state.control),
-                    state == null || state.source == null ? null : Path.of(state.source)) : null;
+                    ? com.agent.skill.PublishedSkills.restore(root, out, saved.skills) : null;
             LLMClient managedClient = knowledge == null ? client : knowledge.audit(client);
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, managedClient, user.autoApprove(), maxSteps, in, out, err,

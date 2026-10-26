@@ -412,6 +412,7 @@ public class Main {
                   --approve-skill C --skill-digest H --related-trial P --counterexample-trial N --trial-control A --trial-source S 交互发布
                   --reject-skill C --skill-digest H --review-note TEXT --trial-control A --trial-source S 交互拒绝
                   --skill-version V / --skill-versions --trial-control A --trial-source S 无 Key 查看版本
+                  --disable-skill V / --enable-skill V --skill-digest H --review-note TEXT --trial-control A --trial-source S 交互停用/恢复原版
                   --task TEXT --knowledge-mode skill [--skill-control A --skill-source S] 使用已批准技能；恢复不覆盖技能库
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务

@@ -205,6 +205,21 @@ class CodingAgentCliPublishedSkillsTest extends SkillPublicationFixture {
         assertEquals(0, cli(fresh, "").startSkillTask("修复业务边界", null, control, sourceArchive, false), text());
         assertTrue(fresh.requests().get(0).toString().contains(revised.version()));
         assertTrue(fresh.requests().get(1).toString().contains("SKILL_GUIDE_V2_MARKER"));
+        String oldDigest = json.readTree(Files.readAllBytes(sourceArchive.resolve(".agent/skills/versions/" + oldVersion + ".json"))).path("sha256").asText();
+        String newDigest = json.readTree(Files.readAllBytes(sourceArchive.resolve(".agent/skills/versions/" + revised.version() + ".json"))).path("sha256").asText();
+        assertEquals(0, cli(null, "disable " + oldVersion + " " + oldDigest + "\n").setSkillEnabled(
+                control, sourceArchive, oldVersion, oldDigest, false, "仅停用旧版", true), text());
+        assertEquals(0, cli(null, "").showSkillVersion(control, sourceArchive, revised.version()), text());
+        assertEquals(0, cli(null, "enable " + oldVersion + " " + oldDigest + "\n").setSkillEnabled(
+                control, sourceArchive, oldVersion, oldDigest, true, "原版复核", true), text());
+        assertEquals(0, cli(null, "disable " + revised.version() + " " + newDigest + "\n").setSkillEnabled(
+                control, sourceArchive, revised.version(), newDigest, false, "暂不复用新版", true), text());
+        Files.writeString(root.resolve(activeSource), "dev-broken"); output.reset();
+        var disabledDefault = new FakeLLMClient(List.of(calls(call("independent", "write_file", Map.of("path", activeSource, "content", "dev-fixed"))), new LLMResponse("请验收", null, 1, 1)));
+        assertEquals(0, cli(disabledDefault, "").startSkillTask("修复业务边界", null, control, sourceArchive, false), text());
+        assertFalse(disabledDefault.requests().get(0).toString().contains(oldVersion) || disabledDefault.requests().get(0).toString().contains(revised.version()), "disabled latest must not fall back to v1");
+        assertEquals(0, cli(null, "enable " + revised.version() + " " + newDigest + "\n").setSkillEnabled(
+                control, sourceArchive, revised.version(), newDigest, true, "恢复原新版", true), text());
         Path file = sourceArchive.resolve(".agent/skills/versions/" + revised.version() + ".json");
         var wrapper = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(Files.readAllBytes(file));
         ((com.fasterxml.jackson.databind.node.ObjectNode) wrapper.path("value")).put("approvedAt", 1);

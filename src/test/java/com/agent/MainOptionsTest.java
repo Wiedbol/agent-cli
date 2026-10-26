@@ -12,6 +12,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @Test void shouldParseExactVersionAvailabilityChangesAndRejectAmbiguousFlags() {
+        for (String action : java.util.List.of("disable", "enable")) {
+            String[] valid = {"--" + action + "-skill", "version", "--skill-digest", "digest", "--review-note", "reason",
+                    "--trial-control", "C:/control", "--trial-source", "C:/archive/workspace"};
+            var parsed = SkillCommands.parse(valid);
+            org.junit.jupiter.api.Assertions.assertNotNull(parsed);
+            assertEquals(action.toUpperCase(java.util.Locale.ROOT), parsed.action().name());
+            assertEquals("version", parsed.versionId()); assertEquals("digest", parsed.digest());
+            for (String extra : java.util.List.of("--yes", "--task", "--enable-skill")) {
+                var mixed = java.util.Arrays.copyOf(valid, valid.length + 1); mixed[valid.length] = extra;
+                org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> SkillCommands.parse(mixed));
+            }
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> SkillCommands.parse(new String[]{"--" + action + "-skill", "version"}));
+        }
+    }
     @Test void shouldParseSkillLibraryOnlyForNewSkillTasks() {
         String[] args = {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/control", "--skill-source", "E:/source"};
         var options = Main.Options.parse(args);

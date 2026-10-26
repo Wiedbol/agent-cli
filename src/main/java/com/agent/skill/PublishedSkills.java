@@ -18,6 +18,12 @@ public final class PublishedSkills implements SkillKnowledge {
         if ((control == null) != (source == null)) { throw new IOException("技能库控制与来源必须成对指定"); }
         if (source != null) { state.control = SkillTrials.canonical(control).toString(); state.source = SkillTrials.canonical(source).toString(); }
     }
+    /** 先恢复已校验的绑定；外部目录失效由任务循环保存暂停原因，不能在进入检查点前丢失现场。 */
+    public static PublishedSkills restore(Path root, PrintStream out, SkillTask saved) throws IOException {
+        var knowledge = new PublishedSkills(root, out, null, null);
+        if (saved != null) { knowledge.state = saved; }
+        return knowledge;
+    }
     private SkillStore store() throws IOException {
         return state.source == null ? new SkillStore(root) : new SkillTrials(root, out).library(Path.of(state.control), Path.of(state.source));
     }

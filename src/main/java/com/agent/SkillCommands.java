@@ -14,9 +14,9 @@ final class SkillCommands {
             "--skill-batch", "--revise-skill", "--revision-reason", "--skill-candidates", "--skill-candidate", "--skill-batches",
             "--trial-skill", "--trial-control", "--trial-source", "--trial-catalog", "--trial-max-steps", "--skill-trial", "--skill-trials",
             "--skill-review", "--approve-skill", "--reject-skill", "--attest-skill-trial", "--skill-version", "--skill-versions",
-            "--skill-digest", "--related-trial", "--counterexample-trial", "--review-note");
+            "--skill-digest", "--related-trial", "--counterexample-trial", "--review-note", "--disable-skill", "--enable-skill");
     private static final Set<String> SWITCHES = Set.of("--start-skill-batch", "--skill-candidates", "--skill-batches", "--skill-trials", "--skill-versions");
-    enum Action { START, GENERATE, CANDIDATES, CANDIDATE, BATCHES, BATCH, TRIAL, TRIAL_SHOW, TRIALS, REVIEW, APPROVE, REJECT, ATTEST, VERSION, VERSIONS }
+    enum Action { START, GENERATE, CANDIDATES, CANDIDATE, BATCHES, BATCH, TRIAL, TRIAL_SHOW, TRIALS, REVIEW, APPROVE, REJECT, ATTEST, VERSION, VERSIONS, DISABLE, ENABLE }
     record Options(Action action, Path root, int limit, List<String> sources, String batch, String parent, String reason,
                    String candidate, SkillTrials.Config trial, Path trialControl, String trialId, Path librarySource,
                    com.agent.skill.SkillReviews.Selection review, String note, String digest, String versionId) { }
@@ -39,7 +39,8 @@ final class SkillCommands {
                 Map.entry("--skill-candidates", Action.CANDIDATES), Map.entry("--skill-candidate", Action.CANDIDATE), Map.entry("--skill-batches", Action.BATCHES),
                 Map.entry("--trial-skill", Action.TRIAL), Map.entry("--skill-trial", Action.TRIAL_SHOW), Map.entry("--skill-trials", Action.TRIALS),
                 Map.entry("--skill-review", Action.REVIEW), Map.entry("--approve-skill", Action.APPROVE), Map.entry("--reject-skill", Action.REJECT),
-                Map.entry("--attest-skill-trial", Action.ATTEST), Map.entry("--skill-version", Action.VERSION), Map.entry("--skill-versions", Action.VERSIONS));
+                Map.entry("--attest-skill-trial", Action.ATTEST), Map.entry("--skill-version", Action.VERSION), Map.entry("--skill-versions", Action.VERSIONS),
+                Map.entry("--disable-skill", Action.DISABLE), Map.entry("--enable-skill", Action.ENABLE));
         var modes = commands.keySet().stream().filter(options::containsKey).toList();
         if (modes.size() > 1 || modes.isEmpty() && !options.containsKey("--skill-batch")) { throw new IllegalArgumentException("每次只能选择一个技能操作"); }
         String primary = modes.isEmpty() ? "--skill-batch" : modes.get(0);
@@ -52,7 +53,7 @@ final class SkillCommands {
             case ATTEST -> Set.of("--trial-control", "--review-note");
             case APPROVE -> Set.of("--trial-control", "--trial-source", "--skill-digest", "--related-trial", "--counterexample-trial");
             case REVIEW -> Set.of("--trial-control", "--trial-source", "--skill-digest");
-            case REJECT -> Set.of("--trial-control", "--trial-source", "--skill-digest", "--review-note");
+            case REJECT, DISABLE, ENABLE -> Set.of("--trial-control", "--trial-source", "--skill-digest", "--review-note");
             case VERSION, VERSIONS -> Set.of("--trial-control", "--trial-source");
             default -> Set.of();
         };
@@ -82,7 +83,7 @@ final class SkillCommands {
                 options.get("--skill-batch"), options.get("--revise-skill"), options.get("--revision-reason"),
                 Set.of(Action.CANDIDATE, Action.REJECT).contains(action) ? options.get(primary) : null, config, control,
                 action == Action.TRIAL_SHOW || action == Action.ATTEST ? options.get(primary) : null, source, selection,
-                options.get("--review-note"), options.get("--skill-digest"), action == Action.VERSION ? options.get(primary) : null);
+                options.get("--review-note"), options.get("--skill-digest"), Set.of(Action.VERSION, Action.DISABLE, Action.ENABLE).contains(action) ? options.get(primary) : null);
     }
     static int run(Options options) {
         LLMClient model = null;
@@ -108,6 +109,8 @@ final class SkillCommands {
             case ATTEST -> cli.attestSkillTrial(options.trialControl(), options.trialId(), options.note(), ConsoleStreams.hasInteractiveConsole());
             case VERSION -> cli.showSkillVersion(options.trialControl(), options.librarySource(), options.versionId());
             case VERSIONS -> cli.listSkillVersions(options.trialControl(), options.librarySource());
+            case DISABLE, ENABLE -> cli.setSkillEnabled(options.trialControl(), options.librarySource(), options.versionId(), options.digest(),
+                    options.action() == Action.ENABLE, options.note(), ConsoleStreams.hasInteractiveConsole());
         };
     }
 }
