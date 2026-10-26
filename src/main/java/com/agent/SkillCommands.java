@@ -3,16 +3,10 @@ package com.agent;
 import com.agent.llm.ApiKeyLoader;
 import com.agent.llm.DeepSeekClient;
 import com.agent.llm.LLMClient;
-import okhttp3.OkHttpClient;
-import okhttp3.RequestBody;
-import okhttp3.MediaType;
-import okio.BufferedSink;
 import com.agent.skill.SkillTrials;
-import java.io.IOException;
 
 import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /** 新技能命令独立解析，避免把不认识的预算参数落回普通聊天或旧任务入口。 */
 final class SkillCommands {
@@ -95,20 +89,7 @@ final class SkillCommands {
         if (options.action() == Action.GENERATE || options.action() == Action.TRIAL) {
             String key = ApiKeyLoader.loadDeepSeekKey();
             if (key == null || key.isBlank()) { System.err.println("生成或试用需要 DeepSeek Key；技能查询无需 Key"); return 2; }
-            // 每个 HTTP 请求体只发一次；同一试用客户端仍可执行多次已分别预留的请求。
-            model = new DeepSeekClient(key, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel(), new OkHttpClient.Builder()
-                    .connectTimeout(60, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS)
-                    .retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
-                    .addInterceptor(chain -> {
-                        RequestBody body = Objects.requireNonNull(chain.request().body());
-                        RequestBody once = new RequestBody() {
-                            @Override public MediaType contentType() { return body.contentType(); }
-                            @Override public long contentLength() throws IOException { return body.contentLength(); }
-                            @Override public void writeTo(BufferedSink sink) throws IOException { body.writeTo(sink); }
-                            @Override public boolean isOneShot() { return true; }
-                        };
-                        return chain.proceed(chain.request().newBuilder().post(once).build());
-                    }).build());
+            model = DeepSeekClient.singleAttempt(key, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel());
         }
         var cli = new CodingAgentCli(options.root(), model, false, 1, ConsoleStreams.newStdinReader(), System.out, System.err);
         return switch (options.action()) {

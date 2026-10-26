@@ -255,30 +255,39 @@ public final class SkillStore {
         var version = version(id);
         return new SkillCandidate.Parent(version.skillId(), id, digest(version));
     }
-    public Version version(String id) throws IOException {
+    public record Snapshot(Version version, SkillCandidate candidate) { }
+    record Approval(Version version, SkillReviews.Publication publication) { }
+    Approval metadata(String id) throws IOException {
+        var version = read("versions", id, Version.class);
+        if (version.schemaVersion() != 2 || !id.equals(version.id()) || !project().equals(version.project())
+                || version.approvedAt() <= 0 || version.reviewId() == null || version.reviewSha256() == null) {
+            throw new IOException("技能版本未完整批准、不可用或跨项目");
+        }
+        requireId(version.skillId()); requireId(version.candidateId());
+        var publication = read("reviews", version.reviewId(), SkillReviews.Publication.class);
+        if (publication.schemaVersion() != 1 || !version.reviewId().equals(publication.id()) || !project().equals(publication.project())
+                || publication.selection() == null || publication.attestation() == null || publication.selection().control() == null
+                || publication.selection().source() == null || !digest(publication).equals(version.reviewSha256()) || !id.equals(publication.versionId())
+                || !version.candidateId().equals(publication.selection().candidate())
+                || !Objects.equals(version.candidateSha256(), publication.selection().sha256()) || version.approvedAt() != publication.at()) {
+            throw new IOException("版本批准记录不符");
+        }
+        return new Approval(version, publication);
+    }
+    public Version version(String id) throws IOException { return snapshot(id).version(); }
+    public Snapshot snapshot(String id) throws IOException {
         if (!readingVersions.add(id) || readingVersions.size() > 32) { throw new IOException("技能版本父链循环或过长"); }
         try {
-            var version = read("versions", id, Version.class);
-            if (version.schemaVersion() != 2 || !id.equals(version.id()) || !project().equals(version.project())
-                    || version.approvedAt() <= 0 || !version.enabled() || version.reviewId() == null || version.reviewSha256() == null) {
-                throw new IOException("技能版本未完整批准、不可用或跨项目");
-            }
+            var approval = metadata(id); var version = approval.version();
+            if (!version.enabled()) { throw new IOException("技能版本不可用"); }
             var candidate = candidate(version.candidateId());
             if (!candidate.skillId().equals(version.skillId()) || !digest(candidate).equals(version.candidateSha256())
                     || !candidate.guide().markdown().equals(Files.readString(path("versions", id, ".md")))) {
                 throw new IOException("版本与批准内容不一致或 Markdown 已被改写");
             }
-            var publication = read("reviews", version.reviewId(), SkillReviews.Publication.class);
-            if (publication.schemaVersion() != 1 || !version.reviewId().equals(publication.id()) || !project().equals(publication.project())
-                    || publication.selection() == null || publication.attestation() == null || publication.selection().control() == null
-                    || publication.selection().source() == null || !digest(publication).equals(version.reviewSha256()) || !id.equals(publication.versionId())
-                    || !version.candidateId().equals(publication.selection().candidate())
-                    || !version.candidateSha256().equals(publication.selection().sha256()) || version.approvedAt() != publication.at()) {
-                throw new IOException("版本批准记录不符");
-            }
             new SkillReviews(originalProject == null ? root : originalProject, new java.io.PrintStream(java.io.OutputStream.nullOutputStream()))
-                    .checkPublication(publication, candidate);
-            return version;
+                    .checkPublication(approval.publication(), candidate);
+            return new Snapshot(version, candidate);
         } finally { readingVersions.remove(id); }
     }
     SkillCandidate.Guide parentGuide(String id) throws IOException {

@@ -102,9 +102,13 @@ public final class TaskStore {
     }
 
     public TaskRecord create(String goal, String command, KnowledgeMode knowledgeMode, String skillTrialId) throws IOException {
+        return create(goal, command, knowledgeMode, skillTrialId, null);
+    }
+    public TaskRecord create(String goal, String command, KnowledgeMode knowledgeMode, String skillTrialId, com.agent.skill.SkillTask skills) throws IOException {
         requireWritable();
         TaskRecord task = new TaskRecord();
-        task.schemaVersion = 9;
+        task.schemaVersion = skills == null ? 9 : 10;
+        task.skills = skills;
         task.skillTrialId = skillTrialId;
         task.knowledgeMode = java.util.Objects.requireNonNull(knowledgeMode, "knowledgeMode");
         task.experiencesEnabled = knowledgeMode == KnowledgeMode.EXPERIENCE;
@@ -225,7 +229,7 @@ public final class TaskStore {
             throw new IOException("任务知识模式记录缺失或类型不合法");
         }
         TaskRecord task = JSON.treeToValue(node, TaskRecord.class);
-        if ((task.schemaVersion < 1 || task.schemaVersion > 9) || !id.equals(task.id) || task.state == null || task.goal == null
+        if ((task.schemaVersion < 1 || task.schemaVersion > 10) || !id.equals(task.id) || task.state == null || task.goal == null
                 || task.command == null || task.files == null || task.checks == null || task.acceptanceFiles == null
                 || task.sessionId == null || task.acceptanceVersion == null || task.reason == null
                 || task.agreementHistory == null || task.schemaVersion >= 2 && !node.hasNonNull("agreementHistory")
@@ -261,6 +265,18 @@ public final class TaskStore {
             throw new IOException("任务试用引用损坏");
         }
         if (task.schemaVersion >= 5 && !node.hasNonNull("resolutions")) { throw new IOException("任务缺少人工处置记录"); }
+        if (task.schemaVersion >= 10) {
+            if (!node.path("skills").isObject()) { throw new IOException("任务技能绑定缺失"); }
+            var skills = node.path("skills");
+            if (!skills.path("firstRequest").isInt()) { throw new IOException("技能审计起点缺失"); }
+            for (String field : List.of("control", "source")) {
+                if (!skills.has(field) || !skills.path(field).isNull() && !skills.path(field).isTextual()) { throw new IOException("技能库绑定字段缺失或类型不合法"); }
+            }
+            for (String field : List.of("offered", "loaded", "events", "failures")) {
+                if (!skills.path(field).isArray()) { throw new IOException("技能集合字段缺失: " + field); }
+            }
+            com.agent.skill.SkillTask.validate(task);
+        } else if (task.skills != null || task.progress.decisions.stream().anyMatch(d -> d.skillRequest != null)) { throw new IOException("旧任务不能携带未声明的技能状态"); }
         for (TaskRecord.EvidenceRef ref : task.checks) { readEvidence(task, ref); }
         for (TaskRecord.Agreement agreement : task.agreementHistory) {
             if (agreement == null || agreement.version() == null || agreement.command() == null

@@ -87,6 +87,23 @@ public class DeepSeekClient implements LLMClient {
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
     }
 
+    /** 显式有界技能工作每次预留只允许发送一次，后续决策仍可各自建立新请求。 */
+    public static DeepSeekClient singleAttempt(String apiKey, String endpoint, String model) {
+        var http = new OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
+                .addInterceptor(chain -> {
+                    RequestBody body = Objects.requireNonNull(chain.request().body());
+                    RequestBody once = new RequestBody() {
+                        @Override public MediaType contentType() { return body.contentType(); }
+                        @Override public long contentLength() throws IOException { return body.contentLength(); }
+                        @Override public void writeTo(okio.BufferedSink sink) throws IOException { body.writeTo(sink); }
+                        @Override public boolean isOneShot() { return true; }
+                    };
+                    return chain.proceed(chain.request().newBuilder().post(once).build());
+                }).build();
+        return new DeepSeekClient(apiKey, endpoint, model, http);
+    }
+
     /** 读取系统属性 {@code agent.deepseek.endpoint}，缺省用官方地址。 */
     public static String defaultEndpoint() {
         String configured = System.getProperty(ENDPOINT_PROPERTY);

@@ -12,6 +12,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @Test void shouldParseSkillLibraryOnlyForNewSkillTasks() {
+        String[] args = {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/control", "--skill-source", "E:/source"};
+        var options = Main.Options.parse(args);
+        assertEquals(Path.of("E:/control"), options.skillControl());
+        assertEquals(Path.of("E:/source"), options.skillSource());
+        assertNull(SkillCommands.parse(args));
+    }
+    @Test void shouldRejectMissingOrOverriddenSkillLibraryContext() {
+        for (String[] args : new String[][] {
+                {"--task", "fix", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--task", "fix", "--knowledge-mode", "none", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/c"},
+                {"--task", "fix", "--knowledge-mode", "skill", "--skill-source", "E:/s"},
+                {"--resume-task", "id", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--tasks", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--task", "fix", "--knowledge-mode", "skill", "--skill-control"},
+                {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/c", "--skill-control", "E:/c", "--skill-source", "E:/s"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(args));
+        }
+    }
     @Test void shouldParsePublicationAndArchivedLibraryCommandsWithoutModelOptions() {
         var approval = SkillCommands.parse(new String[]{"--approve-skill", "candidate", "--skill-digest", "digest",
                 "--related-trial", "positive", "--counterexample-trial", "negative", "--trial-control", "E:/control", "--trial-source", "E:/source"});

@@ -74,7 +74,7 @@ public final class TaskCoordinator {
         if (!decision.allowed()) { throw new IOException("验收命令被守卫拒绝: " + decision.reason()); }
         TaskStore store = new TaskStore(project);
         try (TaskStore.Writer writer = store.lock()) {
-            TaskRecord task = store.create(goal, command, knowledgeMode, knowledge == null ? null : knowledge.trialId());
+            TaskRecord task = store.create(goal, command, knowledgeMode, knowledge == null ? null : knowledge.trialId(), knowledge == null ? null : knowledge.state());
             if (knowledge != null) { knowledge.bind(task); }
             if (maxRequests > task.progress.maxRequests) {
                 task.progress.budgetChanges.add(new TaskRecord.BudgetChange(task.progress.maxRequests,
@@ -91,6 +91,7 @@ public final class TaskCoordinator {
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.read(id);
             if (task.skillTrialId != null) { throw new IOException("试用任务必须通过原试用控制入口处理，不能普通恢复"); }
+            if (knowledge != null) { knowledge.bind(task); }
             if (task.state == TaskRecord.State.Abandoned) { throw new IOException("已放弃任务不能恢复"); }
             return execute(store, task, interactive, true);
         }

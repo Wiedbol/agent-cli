@@ -236,7 +236,12 @@ public class CodingAgentCli {
     }
 
     public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, KnowledgeMode knowledgeMode) {
+        if (knowledgeMode == KnowledgeMode.SKILL) { return startSkillTask(goal, acceptanceCommand, null, null, interactive); }
         return startManagedTask(goal, acceptanceCommand, interactive, knowledgeMode, null);
+    }
+    public int startSkillTask(String goal, String command, Path control, Path source, boolean interactive) {
+        try { return startManagedTask(goal, command, interactive, KnowledgeMode.SKILL, new com.agent.skill.PublishedSkills(root, out, control, source)); }
+        catch (IOException failed) { err.println("技能任务配置失败: " + failed.getMessage()); return 4; }
     }
 
     public int startManagedTask(String goal, String acceptanceCommand, boolean interactive, KnowledgeMode knowledgeMode,
@@ -244,8 +249,9 @@ public class CodingAgentCli {
         if (knowledgeMode == null) { err.println("任务需要明确的知识模式"); return 2; }
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
+            LLMClient managedClient = knowledge == null ? client : knowledge.audit(client);
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
-                    new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
+                    new CodingAgentCli(root, managedClient, user.autoApprove(), maxSteps, in, out, err,
                             managedSession, managedRunner, protection, knowledge).controller, out, knowledge)
                     .start(goal, acceptanceCommand == null ? "mvn test" : acceptanceCommand, maxSteps, interactive, knowledgeMode);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
@@ -396,9 +402,15 @@ public class CodingAgentCli {
     public int resumeManagedTask(String id, boolean interactive) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
+            var saved = new TaskStore(root).read(id);
+            var state = saved.skills;
+            com.agent.skill.SkillKnowledge knowledge = saved.knowledgeMode == KnowledgeMode.SKILL
+                    ? new com.agent.skill.PublishedSkills(root, out, state == null || state.control == null ? null : Path.of(state.control),
+                    state == null || state.source == null ? null : Path.of(state.source)) : null;
+            LLMClient managedClient = knowledge == null ? client : knowledge.audit(client);
             TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
-                    new CodingAgentCli(root, client, user.autoApprove(), maxSteps, in, out, err,
-                            managedSession, managedRunner, protection).controller, out).resume(id, interactive);
+                    new CodingAgentCli(root, managedClient, user.autoApprove(), maxSteps, in, out, err,
+                            managedSession, managedRunner, protection, knowledge).controller, out, knowledge).resume(id, interactive);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); err.println("任务恢复被中断"); return 4;
@@ -446,6 +458,21 @@ public class CodingAgentCli {
                 + "\n知识模式: " + task.knowledgeMode
                 + "\n验收版本: " + task.acceptanceVersion + "\n原因: " + reason);
         var progress = task.progress;
+        if (task.skills != null) {
+            out.println("技能库: " + (task.skills.source == null ? "本地项目" : task.skills.source.replace('\\', '/'))
+                    + "\n技能审计起点: 第 " + task.skills.firstRequest + " 次请求");
+            out.println("固定技能: " + task.skills.loaded);
+            if (task.skills.loaded.isEmpty()) { out.println("技能使用: 未加载"); }
+            for (var pin : task.skills.loaded) {
+                String declaration = task.skills.events.stream().filter(e -> e.type().equals("DECLARATION") && pin.skillId().equals(e.skillId()) && pin.versionId().equals(e.versionId()))
+                        .map(com.agent.skill.SkillTask.Event::detail).reduce((a, b) -> b).orElse("未声明");
+                out.println("技能声明 " + pin.skillId() + "@" + pin.versionId() + ": " + declaration);
+            }
+            for (var event : task.skills.events) { out.println("技能事件: " + event); }
+            for (var decision : progress.decisions) {
+                if (decision.skillRequest != null) { out.println("最终请求审计 " + decision.number + ": " + new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(decision.skillRequest)); }
+            }
+        }
         out.println("模型请求: " + progress.requests + "/" + progress.maxRequests
                 + "\n工具调用: " + progress.tools + "\ntoken: 输入=" + progress.promptTokens
                 + "，输出=" + progress.completionTokens + "，未知请求=" + progress.unknownRequests

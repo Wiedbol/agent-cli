@@ -24,6 +24,8 @@ public final class TaskRecord {
     public boolean experiencesEnabled = true;
     public KnowledgeMode knowledgeMode = KnowledgeMode.EXPERIENCE;
     public String skillTrialId;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    public com.agent.skill.SkillTask skills;
     public List<String> experienceFailures = new ArrayList<>();
     public List<String> experienceAdviceIds = new ArrayList<>();
     public Map<String, String> files = new LinkedHashMap<>();
@@ -109,6 +111,8 @@ public final class TaskRecord {
     }
 
     public static final class Decision {
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        public com.agent.skill.SkillTask.Request skillRequest;
         public int number;
         public String acceptanceVersion;
         public String failureSource;

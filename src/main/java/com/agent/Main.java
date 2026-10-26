@@ -119,8 +119,16 @@ public class Main {
             return;
         }
 
+        DeepSeekClient model;
+        try {
+            boolean skillMode = options.knowledgeMode() == KnowledgeMode.SKILL || options.resumeTask() != null
+                    && new com.agent.task.TaskStore(root).read(options.resumeTask()).knowledgeMode == KnowledgeMode.SKILL;
+            model = skillMode ? DeepSeekClient.singleAttempt(apiKey, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel()) : new DeepSeekClient(apiKey);
+        } catch (IOException failed) {
+            System.err.println("模型任务配置失败: " + failed.getMessage()); System.exit(4); return;
+        }
         CodingAgentCli cli = new CodingAgentCli(root,
-                new DeepSeekClient(apiKey),
+                model,
                 options.autoApprove(),
                 options.maxSteps(),
                 ConsoleStreams.newStdinReader(),
@@ -131,7 +139,9 @@ public class Main {
         int exitCode = options.extractExperience() != null
                 ? cli.extractExperience(options.extractExperience(), true)
                 : options.resumeTask() != null ? cli.resumeManagedTask(options.resumeTask()) : options.task() != null
-                ? cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), options.knowledgeMode()) : cli.runRepl();
+                ? options.knowledgeMode() == KnowledgeMode.SKILL
+                    ? cli.startSkillTask(options.task(), options.acceptanceCommand(), options.skillControl(), options.skillSource(), ConsoleStreams.hasInteractiveConsole())
+                    : cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), options.knowledgeMode()) : cli.runRepl();
         if (exitCode != 0) {
             System.exit(exitCode);
         }
@@ -192,7 +202,7 @@ public class Main {
                    boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId,
                    String resumeTask, String retryTask, String operation, String abandonTask, String replanTask,
                    String extractExperience, boolean experiences, String experience, String disableExperience, boolean noExperiences,
-                   KnowledgeMode knowledgeMode, boolean help) {
+                   KnowledgeMode knowledgeMode, boolean help, Path skillControl, Path skillSource) {
 
         static Options parse(String[] args) {
             String task = null;
@@ -223,6 +233,7 @@ public class Main {
             boolean maximumSpecified = false;
             boolean noExperiences = false;
             KnowledgeMode knowledgeMode = null;
+            Path skillControl = null, skillSource = null;
             boolean help = false;
 
             if (args != null) {
@@ -272,6 +283,18 @@ public class Main {
                             task = args[++i];
                         }
                         case "--yes", "-y" -> autoApprove = true;
+                        case "--skill-control", "--skill-source" -> {
+                            String flag = args[i];
+                            if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) { throw new IllegalArgumentException(flag + " 需要规范绝对路径"); }
+                            Path path = Path.of(args[++i]);
+                            if (flag.equals("--skill-control")) {
+                                if (skillControl != null) { throw new IllegalArgumentException("--skill-control 不能重复"); }
+                                skillControl = path;
+                            } else {
+                                if (skillSource != null) { throw new IllegalArgumentException("--skill-source 不能重复"); }
+                                skillSource = path;
+                            }
+                        }
                         case "--local" -> local = true;
                         case UPPER_FLAG -> upperCase = true;
                         case "--root" -> {
@@ -349,11 +372,14 @@ public class Main {
             if (knowledgeMode != null && noExperiences) {
                 throw new IllegalArgumentException("--knowledge-mode 与 --no-experiences 不能混用");
             }
+            if ((skillControl == null) != (skillSource == null) || skillControl != null && (task == null || knowledgeMode != KnowledgeMode.SKILL)) {
+                throw new IllegalArgumentException("--skill-control/--skill-source 只成对用于新建 SKILL 任务，恢复读取已保存绑定");
+            }
             return new Options(task, autoApprove, local, upperCase, root, maxSteps,
                     resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId,
                     resumeTask, retryTask, operation, abandonTask, replanTask,
                     extractExperience, experiences, experience, disableExperience, noExperiences,
-                    knowledgeMode != null ? knowledgeMode : noExperiences ? KnowledgeMode.NONE : KnowledgeMode.EXPERIENCE, help);
+                    knowledgeMode != null ? knowledgeMode : noExperiences ? KnowledgeMode.NONE : KnowledgeMode.EXPERIENCE, help, skillControl, skillSource);
         }
     }
 
@@ -386,6 +412,7 @@ public class Main {
                   --approve-skill C --skill-digest H --related-trial P --counterexample-trial N --trial-control A --trial-source S 交互发布
                   --reject-skill C --skill-digest H --review-note TEXT --trial-control A --trial-source S 交互拒绝
                   --skill-version V / --skill-versions --trial-control A --trial-source S 无 Key 查看版本
+                  --task TEXT --knowledge-mode skill [--skill-control A --skill-source S] 使用已批准技能；恢复不覆盖技能库
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务
                 不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""");

@@ -3,7 +3,6 @@ package com.agent.skill;
 import com.agent.CodingAgentCli;
 import com.agent.command.CommandRunner;
 import com.agent.llm.*;
-import com.agent.session.Redactor;
 import com.agent.task.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.*;
@@ -147,14 +146,14 @@ public final class SkillTrials {
             if (record.maxRequests > batch.limit - batch.requests.size()) { throw new IOException("批次剩余额度已改变"); }
             save(record);
             out.println("技能试用: " + record.id);
-            var knowledge = new SkillKnowledge(this, record, sourceStore);
+            var knowledge = new TrialSkillKnowledge(this, record, sourceStore);
             CommandRunner restricted = (dir, command, timeout) -> {
                 if (!root.equals(dir.toRealPath()) || !record.command.equals(command)) { throw new SecurityException("试用只允许冻结验收命令"); }
                 return commands.run(dir, command, 60);
             };
             boolean finished = false;
             try {
-                var cli = new CodingAgentCli(root, knowledge.audit(model), true, record.maxRequests,
+                var cli = new CodingAgentCli(root, model, true, record.maxRequests,
                         new BufferedReader(new StringReader("")), out, out, null, restricted);
                 int code = cli.startManagedTask(record.goal, record.command, false, KnowledgeMode.SKILL, knowledge);
                 record.status = code == 0 ? "VERIFIED" : code == 1 ? "PAUSED" : "ERROR";
@@ -337,14 +336,11 @@ public final class SkillTrials {
         var entry = new SkillBatch.Request(); entry.kind = SkillBatch.Kind.TRIAL;
         entry.id = UUID.randomUUID().toString(); entry.candidateId = record.candidateId; entry.candidateSha256 = record.candidateSha256;
         entry.sources = store.candidate(record.candidateId).sources(); entry.trialId = record.id; entry.taskId = task.id;
-        entry.requestSha256 = requestDigest(messages, tools); entry.reservedAt = System.currentTimeMillis();
+        var payload = SkillRequests.capture(messages, tools);
+        entry.requestSha256 = payload.sha256(); entry.reservedAt = System.currentTimeMillis();
         var packet = new SkillTrial.Request(); packet.id = entry.id; packet.sha256 = entry.requestSha256; packet.decision = task.progress.requests;
-        var arguments = new HashMap<String, String>();
-        messages.stream().filter(m -> m.toolCalls() != null).flatMap(m -> m.toolCalls().stream()).forEach(c -> arguments.put(c.id(), c.arguments()));
-        packet.messages = messages.stream().map(m -> new Message(m.role(), auditText(m.content(), arguments.get(m.toolCallId())),
-                m.toolCalls() == null ? null : m.toolCalls().stream().map(c -> new ToolCall(c.id(), new ToolCall.Function(c.name(), auditText(c.arguments(), c.arguments())))).toList(), m.toolCallId())).toList();
-        packet.tools = List.copyOf(tools);
-        entry.auditSha256 = requestDigest(packet.messages, packet.tools);
+        packet.messages = payload.messages(); packet.tools = payload.tools();
+        entry.auditSha256 = payload.auditSha256();
         batch.schemaVersion = 2; batch.requests.add(entry); store.write("batches", batch.id, batch);
         packet.catalogIncluded = !directory.isEmpty() && messages.stream().anyMatch(m -> m.content() != null && m.content().contains(directory));
         packet.guideIncluded = record.loaded && messages.stream().anyMatch(m -> m.content() != null && m.content().contains(guide));
@@ -367,15 +363,6 @@ public final class SkillTrials {
         }
     }
     private static String requestDigest(List<Message> messages, List<LLMClient.ToolDef> tools) throws IOException {
-        var payload = SkillStore.JSON.createObjectNode();
-        payload.set("messages", SkillStore.JSON.valueToTree(messages));
-        payload.set("tools", SkillStore.JSON.valueToTree(tools));
-        return SkillStore.digest(payload);
-    }
-    private static String auditText(String text, String arguments) {
-        if (text == null) { return null; }
-        if (Redactor.redact(text, arguments).redacted()
-                || Redactor.redact(text.replace("\"", "").replace("'", ""), arguments).redacted()) { return Redactor.PLACEHOLDER; }
-        return text;
+        return SkillRequests.digest(messages, tools);
     }
 }

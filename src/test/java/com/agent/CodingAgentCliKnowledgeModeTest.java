@@ -87,7 +87,7 @@ class CodingAgentCliKnowledgeModeTest {
         assertTrue(text().contains("baseline: FAILED"), text());
         assertTrue(text().contains("final: PASSED"), text());
         assertFalse(model.requests().toString().contains("参考经验 "));
-        assertTrue(model.toolRequests().stream().flatMap(List::stream).noneMatch(tool -> tool.name().contains("skill")));
+        assertEquals(mode == KnowledgeMode.SKILL, model.toolRequests().stream().flatMap(List::stream).anyMatch(tool -> tool.name().equals("load_skill")));
     }
 
     /** 构造旧格式或有效摘要的坏字段，确保测到语义校验而非仅测摘要损坏。 */
