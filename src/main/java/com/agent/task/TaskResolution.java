@@ -22,7 +22,7 @@ public final class TaskResolution {
         TaskStore store = new TaskStore(root);
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.read(id);
-            if (task.state == TaskRecord.State.Abandoned) { return task; }
+            if (task.state == TaskRecord.State.Abandoned) { com.agent.skill.SkillFeedback.ended(root, task); return task; }
             out.println("放弃任务: " + id + "\n保留当前文件和全部轨迹，不回滚、不认定未知操作成功；不会自动终止旧进程。\n请输入 abandon " + id);
             out.flush();
             if (!interactive) { return pause(store, task, "非交互运行不能批准放弃；--yes 不适用"); }
@@ -38,6 +38,7 @@ public final class TaskResolution {
             task.state = TaskRecord.State.Abandoned;
             task.reason = "已明确放弃，文件和结果不明的操作轨迹保留；旧进程须另行检查";
             store.save(task);
+            com.agent.skill.SkillFeedback.ended(root, task);
             return task;
         }
     }

@@ -8,7 +8,12 @@ import java.util.*;
 
 /** 审核复用实际归档证据；操作者判断声明和动作，不把成功验收当作迁移收益。 */
 public final class SkillReviews {
-    public record Selection(Path control, Path source, String candidate, String sha256, String related, String counterexample) { }
+    public record Selection(Path control, Path source, String candidate, String sha256, String related, String counterexample,
+                            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) List<String> regressions) {
+        public Selection(Path control, Path source, String candidate, String sha256, String related, String counterexample) {
+            this(control, source, candidate, sha256, related, counterexample, null);
+        }
+    }
     private final Path root;
     private final PrintStream out;
     private final SkillTrials trials;
@@ -16,11 +21,17 @@ public final class SkillReviews {
         this.root = root.toRealPath(); this.out = out; trials = new SkillTrials(this.root, out);
     }
     private record Evidence(SkillTrial trial, TaskRecord task, JsonNode criteria, String sha256) { }
-    private record Review(SkillCandidate candidate, SkillStore store, Evidence related, Evidence counterexample) { }
+    private record Review(SkillCandidate candidate, SkillStore store, Evidence related, Evidence counterexample, List<Evidence> regressions) { }
     public record Attestation(int schemaVersion, String id, String project, String candidateSha256,
                               String evidenceSha256, String note, long at) { }
     public record Publication(int schemaVersion, String id, String project, Selection selection, String versionId,
-                              String relatedSha256, String counterexampleSha256, Attestation attestation, long at) { }
+                              String relatedSha256, String counterexampleSha256, Attestation attestation, long at,
+                              @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) Map<String, String> regressions) {
+        public Publication(int schemaVersion, String id, String project, Selection selection, String versionId,
+                           String relatedSha256, String counterexampleSha256, Attestation attestation, long at) {
+            this(schemaVersion, id, project, selection, versionId, relatedSha256, counterexampleSha256, attestation, at, null);
+        }
+    }
     public record Rejection(int schemaVersion, String id, String project, String candidateSha256, String reason, long at) { }
     private Evidence evidence(Selection selection, String id, String kind, SkillCandidate candidate) throws IOException {
         var trial = trials.readTrial(selection.control(), id);
@@ -100,6 +111,9 @@ public final class SkillReviews {
         return inspectTrials(selection, store, candidate);
     }
     private Review inspectTrials(Selection selection, SkillStore store, SkillCandidate candidate) throws IOException {
+        return inspectTrials(selection, store, candidate, true);
+    }
+    private Review inspectTrials(Selection selection, SkillStore store, SkillCandidate candidate, boolean requireRegressions) throws IOException {
         if (!candidate.id().equals(selection.candidate()) || !SkillStore.digest(candidate).equals(selection.sha256())) { throw new IOException("待审核候选摘要不符"); }
         if (store.exists("rejections", candidate.id())) { throw new IOException("候选已拒绝，不能发布"); }
         var related = evidence(selection, selection.related(), "related", candidate);
@@ -107,11 +121,35 @@ public final class SkillReviews {
         if (!related.trial().configuration.equals(counter.trial().configuration)
                 || !related.trial().catalogSha256.equals(counter.trial().catalogSha256)
                 || !related.trial().projectId.equals(counter.trial().projectId)) { throw new IOException("正反例模型/调用配置或开发清单不一致"); }
-        return new Review(candidate, store, related, counter);
+        var regressions = new ArrayList<Evidence>();
+        if (candidate.parent() != null && requireRegressions) {
+            if (candidate.feedback() != null && candidate.feedback().catalogSha256() != null
+                    && !candidate.feedback().catalogSha256().equals(related.trial().catalogSha256)) { throw new IOException("试用清单不等于修订冻结的开发清单"); }
+            var available = new TreeMap<String, Evidence>();
+            available.put(related.trial().caseId, related); available.put(counter.trial().caseId, counter);
+            var ids = selection.regressions() == null ? List.<String>of() : selection.regressions();
+            if (ids.size() > 10 || new HashSet<>(ids).size() != ids.size()) { throw new IOException("旧开发回归试用重复或过多"); }
+            for (String id : ids) {
+                if (id.equals(selection.related()) || id.equals(selection.counterexample())) { continue; }
+                var trial = trials.readTrial(selection.control(), id);
+                var regression = evidence(selection, id, trial.caseKind, candidate);
+                if (!related.trial().configuration.equals(trial.configuration) || !related.trial().catalogSha256.equals(trial.catalogSha256)
+                        || !related.trial().projectId.equals(trial.projectId)) { throw new IOException("旧开发回归冻结配置不符"); }
+                available.put(trial.caseId, regression);
+            }
+            var catalog = SkillTrials.read(Path.of(related.trial().catalog));
+            for (var required : catalog.path("stages").path("required-regression")) {
+                var regression = available.get(required.asText());
+                if (regression == null) { throw new IOException("缺少必要旧开发回归: " + required.asText()); }
+                regressions.add(regression);
+            }
+        }
+        return new Review(candidate, store, related, counter, List.copyOf(regressions));
     }
     public void review(Selection selection) throws IOException {
         var store = trials.library(selection.control(), selection.source());
         var candidate = store.candidate(selection.candidate());
+        if (candidate.feedback() != null) { out.println("选定反馈快照: " + SkillStore.JSON.writeValueAsString(candidate.feedback())); }
         out.println("技能审核: " + candidate.id() + "@" + SkillStore.digest(candidate) + "\n" + candidate.guide().markdown()
                 + "\n父版本: " + candidate.parent() + "\n修订原因: " + candidate.revisionReason());
         var library = com.agent.experience.ExperienceLibrary.readOnlyArchive(selection.source(), root);
@@ -131,6 +169,7 @@ public final class SkillReviews {
             for (var evidence : List.of(review.related(), review.counterexample())) {
                 printEvidence(evidence); trials.show(selection.control(), evidence.trial().id);
             }
+            for (var regression : review.regressions()) { out.println("旧开发回归: " + regression.trial().caseId); printEvidence(regression); }
             out.println("结构/来源和正反例验收门槛已通过；仍须有效人工核验及交互批准，查看不会发布。");
         } catch (IOException blocked) {
             out.println("发布门槛未满足: " + blocked.getMessage());
@@ -180,8 +219,9 @@ public final class SkillReviews {
             long at = System.currentTimeMillis();
             for (String id : current.store().ids("versions")) { at = Math.max(at, current.store().historicalSnapshot(id).version().approvedAt() + 1); }
             String versionId = UUID.randomUUID().toString(), reviewId = UUID.randomUUID().toString();
-            var publication = new Publication(1, reviewId, current.store().project(), selection, versionId,
-                    current.related().sha256(), current.counterexample().sha256(), attestation, at);
+            var publication = new Publication(current.candidate().parent() == null ? 1 : 2, reviewId, current.store().project(), selection, versionId,
+                    current.related().sha256(), current.counterexample().sha256(), attestation, at,
+                    current.candidate().parent() == null ? null : regressionDigests(current));
             current.store().versionMarkdown(versionId, current.candidate().guide().markdown());
             current.store().writeNew("reviews", reviewId, publication);
             var version = new SkillStore.Version(2, versionId, current.candidate().skillId(), current.store().project(),
@@ -235,14 +275,20 @@ public final class SkillReviews {
         }
     }
     void checkPublication(Publication publication, SkillCandidate candidate) throws IOException {
-        if (publication.schemaVersion() != 1 || !root.toString().replace('\\', '/').equals(publication.project()) || publication.at() <= 0) {
+        if ((publication.schemaVersion() != 1 && publication.schemaVersion() != 2) || !root.toString().replace('\\', '/').equals(publication.project()) || publication.at() <= 0) {
             throw new IOException("批准记录属于其他项目或损坏");
         }
         var selection = publication.selection();
         // 调用者刚核验过候选及父链；这里核验其批准证据，避免递归重复读取同一父链。
-        var current = inspectTrials(selection, trials.library(selection.control(), selection.source()), candidate);
+        var current = inspectTrials(selection, trials.library(selection.control(), selection.source()), candidate, publication.schemaVersion() >= 2);
         if (!current.related().sha256().equals(publication.relatedSha256()) || !current.counterexample().sha256().equals(publication.counterexampleSha256())
-                || !attestation(current).equals(publication.attestation())) { throw new IOException("批准所依据的试用或人工核验已改变"); }
+                || !attestation(current).equals(publication.attestation())
+                || publication.schemaVersion() >= 2 && !regressionDigests(current).equals(publication.regressions())) { throw new IOException("批准所依据的试用或人工核验已改变"); }
+    }
+    private static Map<String, String> regressionDigests(Review review) {
+        var digests = new TreeMap<String, String>();
+        for (var evidence : review.regressions()) { digests.put(evidence.trial().id, evidence.sha256()); }
+        return digests;
     }
     /** 可用性变更另存历史；恢复只认可同一批准内容，不能借此换版或补造证据。 */
     public boolean setEnabled(Path control, Path source, String id, String sha256, boolean enabled, String reason,
@@ -301,6 +347,7 @@ public final class SkillReviews {
                     + SkillStore.JSON.writeValueAsString(store.read("reviews", version.reviewId(), Publication.class)));
             var candidate = store.candidate(version.candidateId());
             out.println("父版本: " + candidate.parent() + "\n修订原因: " + candidate.revisionReason() + "\n" + candidate.guide().markdown());
+            if (candidate.feedback() != null) { out.println("选定反馈快照: " + SkillStore.JSON.writeValueAsString(candidate.feedback())); }
         }
         if (selected == null && unavailable) { throw new IOException("部分版本不可用，已显示其他有效版本"); }
     }

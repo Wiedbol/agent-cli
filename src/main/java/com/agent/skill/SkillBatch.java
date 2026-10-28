@@ -11,7 +11,7 @@ public final class SkillBatch {
     public int limit;
     public List<Request> requests = new ArrayList<>();
 
-    public enum State { RESERVED, RESPONDED, FAILED, COMPLETED }
+    public enum State { RESERVED, RESPONDED, FAILED, COMPLETED, NO_REVISION }
     public enum Kind { GENERATION, TRIAL }
     public static final class Request {
         public Kind kind = Kind.GENERATION;
@@ -30,5 +30,7 @@ public final class SkillBatch {
         public String taskId;
         public String requestSha256;
         public String auditSha256;
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        public SkillFeedback.Inputs feedback;
     }
 }

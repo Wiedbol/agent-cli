@@ -81,7 +81,7 @@ public final class TaskCoordinator {
                         maxRequests, System.currentTimeMillis()));
             }
             task.progress.maxRequests = maxRequests;
-            return execute(store, task, interactive, false);
+            return executeWithFeedback(store, task, interactive, false);
         }
     }
 
@@ -93,8 +93,22 @@ public final class TaskCoordinator {
             if (task.skillTrialId != null) { throw new IOException("试用任务必须通过原试用控制入口处理，不能普通恢复"); }
             if (knowledge != null) { knowledge.bind(task); }
             if (task.state == TaskRecord.State.Abandoned) { throw new IOException("已放弃任务不能恢复"); }
-            return execute(store, task, interactive, true);
+            return executeWithFeedback(store, task, interactive, true);
         }
+    }
+
+    /** 异常也可能已保存暂停现场；只从可靠落盘状态登记，且不能覆盖原异常或独立验收结果。 */
+    private TaskRecord executeWithFeedback(TaskStore store, TaskRecord task, boolean interactive, boolean resumed)
+            throws IOException, InterruptedException {
+        TaskRecord result;
+        try { result = execute(store, task, interactive, resumed); }
+        catch (IOException | UncheckedIOException | InterruptedException original) {
+            try { com.agent.skill.SkillFeedback.ended(root, store.read(task.id)); }
+            catch (IOException | RuntimeException registrationFailed) { original.addSuppressed(registrationFailed); }
+            throw original;
+        }
+        com.agent.skill.SkillFeedback.ended(root, result);
+        return result;
     }
 
     private TaskRecord execute(TaskStore store, TaskRecord task, boolean interactive, boolean resumed)

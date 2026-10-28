@@ -223,11 +223,13 @@ public final class SkillStore {
     }
     public SkillCandidate candidate(String id) throws IOException {
         var candidate = read("candidates", id, SkillCandidate.class);
-        if (candidate.schemaVersion() != 1 || !id.equals(candidate.id()) || !project().equals(candidate.project())
+        if ((candidate.schemaVersion() != 1 && candidate.schemaVersion() != 2) || !id.equals(candidate.id()) || !project().equals(candidate.project())
                 || candidate.createdAt() <= 0 || candidate.sources() == null || candidate.sources().isEmpty()) {
             throw new IOException("候选记录损坏或不属于本项目");
         }
         requireId(candidate.skillId());
+        if ((candidate.schemaVersion() == 2) != (candidate.feedback() != null)) { throw new IOException("候选反馈格式损坏"); }
+        if (candidate.feedback() != null) { SkillFeedback.validateInputs(originalProject == null ? root : originalProject, candidate.feedback(), candidate.parent()); }
         validateGuide(candidate.guide());
         if (candidate.sources().stream().anyMatch(s -> s == null || s.experience() == null)) { throw new IOException("候选来源引用缺失"); }
         if (!candidate.sources().equals(sources(candidate.sources().stream().map(s -> s.experience().id()).toList()))) {
@@ -248,7 +250,8 @@ public final class SkillStore {
         if (request.state != SkillBatch.State.COMPLETED || !id.equals(request.candidateId)
                 || !digest(candidate).equals(request.candidateSha256) || !candidate.sources().equals(request.sources)
                 || !Objects.equals(candidate.parent(), request.parent)
-                || !Objects.equals(candidate.revisionReason(), request.revisionReason)) { throw new IOException("候选尚未完整审计或摘要不符"); }
+                || !Objects.equals(candidate.revisionReason(), request.revisionReason)
+                || !Objects.equals(candidate.feedback(), request.feedback)) { throw new IOException("候选尚未完整审计或摘要不符"); }
         return candidate;
     }
     SkillCandidate.Parent parent(String id) throws IOException {
@@ -321,7 +324,8 @@ public final class SkillStore {
         }
         requireId(version.skillId()); requireId(version.candidateId());
         var publication = read("reviews", version.reviewId(), SkillReviews.Publication.class);
-        if (publication.schemaVersion() != 1 || !version.reviewId().equals(publication.id()) || !project().equals(publication.project())
+        if ((publication.schemaVersion() != 1 && publication.schemaVersion() != 2) || publication.schemaVersion() >= 2 && publication.regressions() == null
+                || !version.reviewId().equals(publication.id()) || !project().equals(publication.project())
                 || publication.selection() == null || publication.attestation() == null || publication.selection().control() == null
                 || publication.selection().source() == null || !digest(publication).equals(version.reviewSha256()) || !id.equals(publication.versionId())
                 || !version.candidateId().equals(publication.selection().candidate())

@@ -413,6 +413,9 @@ public class Main {
                   --reject-skill C --skill-digest H --review-note TEXT --trial-control A --trial-source S 交互拒绝
                   --skill-version V / --skill-versions --trial-control A --trial-source S 无 Key 查看版本
                   --disable-skill V / --enable-skill V --skill-digest H --review-note TEXT --trial-control A --trial-source S 交互停用/恢复原版
+                  --skill-feedbacks [--trial-control A --trial-source S] 无 Key 查看事实与待办；--register-skill-feedback 无模型补齐当前项目记录
+                  --revise-from-feedback F1,F2 --skill-batch B --revise-skill V --revision-reason TEXT [--feedback-source S --feedback-catalog C] 显式有界修订
+                  --regression-trials T1,T2 审核/批准修订时绑定必要旧开发回归
                   --task TEXT --knowledge-mode skill [--skill-control A --skill-source S] 使用已批准技能；恢复不覆盖技能库
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务

@@ -12,6 +12,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @Test void shouldParseFeedbackInspectionExplicitRevisionAndRegressionBindings() {
+        var query = SkillCommands.parse(new String[]{"--skill-feedbacks"});
+        org.junit.jupiter.api.Assertions.assertNotNull(query); assertEquals("FEEDBACKS", query.action().name());
+        var registration = SkillCommands.parse(new String[]{"--register-skill-feedback"}); assertEquals("REGISTER", registration.action().name());
+        var revision = SkillCommands.parse(new String[]{"--revise-from-feedback", "f1,f2", "--skill-batch", "batch",
+                "--revise-skill", "version", "--revision-reason", "明确理由", "--feedback-catalog", "C:/catalog.json"});
+        assertEquals("REVISION", revision.action().name()); assertEquals(java.util.List.of("f1", "f2"), revision.feedback().ids());
+        var review = SkillCommands.parse(new String[]{"--approve-skill", "c", "--skill-digest", "sha", "--related-trial", "r",
+                "--counterexample-trial", "n", "--trial-control", "C:/control", "--trial-source", "C:/source", "--regression-trials", "old1,old2"});
+        assertEquals(java.util.List.of("old1", "old2"), review.review().regressions());
+        for (String[] invalid : new String[][]{{"--revise-from-feedback", "f"}, {"--skill-feedbacks", "--yes"},
+                {"--register-skill-feedback", "--task", "fix"}, {"--skill-feedbacks", "--feedback-catalog", "c"}}) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> SkillCommands.parse(invalid));
+        }
+    }
     @Test void shouldParseExactVersionAvailabilityChangesAndRejectAmbiguousFlags() {
         for (String action : java.util.List.of("disable", "enable")) {
             String[] valid = {"--" + action + "-skill", "version", "--skill-digest", "digest", "--review-note", "reason",

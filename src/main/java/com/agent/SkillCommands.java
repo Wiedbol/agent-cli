@@ -14,12 +14,13 @@ final class SkillCommands {
             "--skill-batch", "--revise-skill", "--revision-reason", "--skill-candidates", "--skill-candidate", "--skill-batches",
             "--trial-skill", "--trial-control", "--trial-source", "--trial-catalog", "--trial-max-steps", "--skill-trial", "--skill-trials",
             "--skill-review", "--approve-skill", "--reject-skill", "--attest-skill-trial", "--skill-version", "--skill-versions",
-            "--skill-digest", "--related-trial", "--counterexample-trial", "--review-note", "--disable-skill", "--enable-skill");
-    private static final Set<String> SWITCHES = Set.of("--start-skill-batch", "--skill-candidates", "--skill-batches", "--skill-trials", "--skill-versions");
-    enum Action { START, GENERATE, CANDIDATES, CANDIDATE, BATCHES, BATCH, TRIAL, TRIAL_SHOW, TRIALS, REVIEW, APPROVE, REJECT, ATTEST, VERSION, VERSIONS, DISABLE, ENABLE }
+            "--skill-digest", "--related-trial", "--counterexample-trial", "--review-note", "--disable-skill", "--enable-skill",
+            "--skill-feedbacks", "--register-skill-feedback", "--revise-from-feedback", "--feedback-source", "--feedback-catalog", "--regression-trials");
+    private static final Set<String> SWITCHES = Set.of("--start-skill-batch", "--skill-candidates", "--skill-batches", "--skill-trials", "--skill-versions", "--skill-feedbacks", "--register-skill-feedback");
+    enum Action { START, GENERATE, CANDIDATES, CANDIDATE, BATCHES, BATCH, TRIAL, TRIAL_SHOW, TRIALS, REVIEW, APPROVE, REJECT, ATTEST, VERSION, VERSIONS, DISABLE, ENABLE, FEEDBACKS, REGISTER, REVISION }
     record Options(Action action, Path root, int limit, List<String> sources, String batch, String parent, String reason,
                    String candidate, SkillTrials.Config trial, Path trialControl, String trialId, Path librarySource,
-                   com.agent.skill.SkillReviews.Selection review, String note, String digest, String versionId) { }
+                   com.agent.skill.SkillReviews.Selection review, String note, String digest, String versionId, com.agent.skill.SkillFeedback.Selection feedback) { }
 
     static Options parse(String[] args) {
         if (args == null || Arrays.stream(args).noneMatch(FLAGS::contains)) { return null; }
@@ -40,7 +41,8 @@ final class SkillCommands {
                 Map.entry("--trial-skill", Action.TRIAL), Map.entry("--skill-trial", Action.TRIAL_SHOW), Map.entry("--skill-trials", Action.TRIALS),
                 Map.entry("--skill-review", Action.REVIEW), Map.entry("--approve-skill", Action.APPROVE), Map.entry("--reject-skill", Action.REJECT),
                 Map.entry("--attest-skill-trial", Action.ATTEST), Map.entry("--skill-version", Action.VERSION), Map.entry("--skill-versions", Action.VERSIONS),
-                Map.entry("--disable-skill", Action.DISABLE), Map.entry("--enable-skill", Action.ENABLE));
+                Map.entry("--disable-skill", Action.DISABLE), Map.entry("--enable-skill", Action.ENABLE),
+                Map.entry("--skill-feedbacks", Action.FEEDBACKS), Map.entry("--register-skill-feedback", Action.REGISTER), Map.entry("--revise-from-feedback", Action.REVISION));
         var modes = commands.keySet().stream().filter(options::containsKey).toList();
         if (modes.size() > 1 || modes.isEmpty() && !options.containsKey("--skill-batch")) { throw new IllegalArgumentException("每次只能选择一个技能操作"); }
         String primary = modes.isEmpty() ? "--skill-batch" : modes.get(0);
@@ -48,6 +50,7 @@ final class SkillCommands {
         Set<String> required = switch (action) {
             case START -> Set.of("--request-limit");
             case GENERATE -> Set.of("--skill-batch");
+            case REVISION -> Set.of("--skill-batch", "--revise-skill", "--revision-reason");
             case TRIAL -> Set.of("--skill-batch", "--trial-control", "--trial-source", "--trial-catalog", "--trial-max-steps");
             case TRIAL_SHOW, TRIALS -> Set.of("--trial-control");
             case ATTEST -> Set.of("--trial-control", "--review-note");
@@ -58,16 +61,19 @@ final class SkillCommands {
             default -> Set.of();
         };
         var allowed = new HashSet<>(required); allowed.add(primary); allowed.add("--root");
-        boolean archiveOptional = Set.of(Action.START, Action.GENERATE, Action.CANDIDATES, Action.CANDIDATE, Action.BATCHES, Action.BATCH).contains(action);
+        boolean archiveOptional = Set.of(Action.START, Action.GENERATE, Action.CANDIDATES, Action.CANDIDATE, Action.BATCHES, Action.BATCH, Action.FEEDBACKS, Action.REVISION).contains(action);
         if (archiveOptional) { allowed.addAll(Set.of("--trial-control", "--trial-source")); }
         if (action == Action.GENERATE) { allowed.addAll(Set.of("--revise-skill", "--revision-reason")); }
         if (action == Action.REVIEW) { allowed.addAll(Set.of("--related-trial", "--counterexample-trial")); }
+        if (action == Action.REVIEW || action == Action.APPROVE) { allowed.add("--regression-trials"); }
+        if (action == Action.REVISION) { allowed.addAll(Set.of("--feedback-source", "--feedback-catalog")); }
         if (!options.keySet().containsAll(required) || !allowed.containsAll(options.keySet())) { throw new IllegalArgumentException("技能操作参数缺失或冲突: " + action); }
         if (archiveOptional && options.containsKey("--trial-control") != options.containsKey("--trial-source")
                 || options.containsKey("--revise-skill") != options.containsKey("--revision-reason")
                 || action == Action.REVIEW && options.containsKey("--related-trial") != options.containsKey("--counterexample-trial")) {
             throw new IllegalArgumentException("控制/来源、父版本/原因和正反例参数必须成对指定");
         }
+        if (options.containsKey("--feedback-source") && !options.containsKey("--trial-control")) { throw new IllegalArgumentException("归档反馈需要受控来源上下文"); }
         int limit = action == Action.START ? Integer.parseInt(options.get("--request-limit")) : 0;
         int requests = action == Action.TRIAL ? Integer.parseInt(options.get("--trial-max-steps")) : 0;
         if (action == Action.START && limit <= 0 || action == Action.TRIAL && requests <= 0) { throw new IllegalArgumentException("请求额度必须为正整数"); }
@@ -76,18 +82,29 @@ final class SkillCommands {
         var config = action == Action.TRIAL ? new SkillTrials.Config(control, source, Path.of(options.get("--trial-catalog")), options.get(primary),
                 options.get("--skill-batch"), requests, DeepSeekClient.defaultModel(), DeepSeekClient.defaultEndpoint()) : null;
         var selection = action == Action.REVIEW || action == Action.APPROVE ? new com.agent.skill.SkillReviews.Selection(control, source,
-                options.get(primary), options.get("--skill-digest"), options.get("--related-trial"), options.get("--counterexample-trial")) : null;
+                options.get(primary), options.get("--skill-digest"), options.get("--related-trial"), options.get("--counterexample-trial"),
+                options.containsKey("--regression-trials") ? identifiers(options.get("--regression-trials")) : null) : null;
+        var feedback = action == Action.REVISION ? new com.agent.skill.SkillFeedback.Selection(identifiers(options.get(primary)),
+                options.containsKey("--feedback-source") ? Path.of(options.get("--feedback-source")) : null,
+                options.containsKey("--feedback-catalog") ? Path.of(options.get("--feedback-catalog")) : null) : null;
         List<String> sources = action == Action.GENERATE ? Arrays.stream(options.get(primary).split(",", -1)).map(String::trim).toList() : List.of();
         if (sources.stream().anyMatch(String::isBlank)) { throw new IllegalArgumentException("来源经验列表不能有空项"); }
         return new Options(action, Path.of(options.getOrDefault("--root", ".")).toAbsolutePath().normalize(), limit, sources,
                 options.get("--skill-batch"), options.get("--revise-skill"), options.get("--revision-reason"),
                 Set.of(Action.CANDIDATE, Action.REJECT).contains(action) ? options.get(primary) : null, config, control,
                 action == Action.TRIAL_SHOW || action == Action.ATTEST ? options.get(primary) : null, source, selection,
-                options.get("--review-note"), options.get("--skill-digest"), Set.of(Action.VERSION, Action.DISABLE, Action.ENABLE).contains(action) ? options.get(primary) : null);
+                options.get("--review-note"), options.get("--skill-digest"), Set.of(Action.VERSION, Action.DISABLE, Action.ENABLE).contains(action) ? options.get(primary) : null, feedback);
+    }
+    private static List<String> identifiers(String value) {
+        var ids = Arrays.stream(value.split(",", -1)).map(String::trim).toList();
+        if (ids.isEmpty() || ids.size() > 10 || ids.stream().anyMatch(String::isBlank) || new HashSet<>(ids).size() != ids.size()) {
+            throw new IllegalArgumentException("需要一至十个不重复非空标识");
+        }
+        return ids;
     }
     static int run(Options options) {
         LLMClient model = null;
-        if (options.action() == Action.GENERATE || options.action() == Action.TRIAL) {
+        if (options.action() == Action.GENERATE || options.action() == Action.TRIAL || options.action() == Action.REVISION) {
             String key = ApiKeyLoader.loadDeepSeekKey();
             if (key == null || key.isBlank()) { System.err.println("生成或试用需要 DeepSeek Key；技能查询无需 Key"); return 2; }
             model = DeepSeekClient.singleAttempt(key, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel());
@@ -111,6 +128,9 @@ final class SkillCommands {
             case VERSIONS -> cli.listSkillVersions(options.trialControl(), options.librarySource());
             case DISABLE, ENABLE -> cli.setSkillEnabled(options.trialControl(), options.librarySource(), options.versionId(), options.digest(),
                     options.action() == Action.ENABLE, options.note(), ConsoleStreams.hasInteractiveConsole());
+            case FEEDBACKS -> cli.listSkillFeedback(options.trialControl(), options.librarySource());
+            case REGISTER -> cli.registerSkillFeedback();
+            case REVISION -> cli.reviseSkillFromFeedback(options.trialControl(), options.librarySource(), options.batch(), options.parent(), options.reason(), options.feedback());
         };
     }
 }

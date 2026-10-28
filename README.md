@@ -287,6 +287,28 @@ java -jar $agentJar @library --enable-skill '同一版本ID' --skill-digest '原
 
 目录选择、加载、声明使用的模型轮次全部计入既有任务累计账本；没有额外检索模型或模型裁判。发送前保存请求预留和最终请求副本，SKILL HTTP 请求禁止自动重发；失败和结果不明保留消耗，缺失 token 用量显示未知。必要审计保存失败会停止后续请求和操作。批准时间或默认版本记录损坏时不自动退回旧默认；已固定的健康旧版按其自身证据验证。无匹配、未使用技能或任务通过均不单独证明知识带来了收益。
 
+### 反馈登记与显式修订
+
+确认合格经验后会登记“待提炼”项；普通 SKILL 任务暂停、验证通过或明确放弃后，会按任务和加载版本登记“待审查”项。未加载也如实记录。恢复更新同一事项，重复查询不写文件、不调用模型或验收。事实包括模型声明、真实操作及文件变化、独立验收、人工处置和已知/未知消耗；未声明、拒绝和不同修复路径只是审查提示，不自动判定技能有效或有害。
+
+```powershell
+java -jar $agentJar --root E:/repair-v2-work --skill-feedbacks
+java -jar $agentJar @library --skill-feedbacks
+java -jar $agentJar --root E:/repair-v2-work --register-skill-feedback
+java -jar $agentJar @library --start-skill-batch --request-limit 4
+java -jar $agentJar @library --revise-from-feedback '反馈ID1,反馈ID2' --skill-batch '批次ID' `
+  --revise-skill '目标父版本ID' --revision-reason '依据选定事实的具体改动理由' `
+  --feedback-catalog E:/agent-cli/examples/repair-lab-v2/MANIFEST.json
+```
+
+`--register-skill-feedback` 只为当前项目补齐已有合格来源和结束任务的事实，供升级或登记中断后使用，不提炼或保存新经验。查询、补齐均无需 Key。需要模型的反馈修订仍须显式有界批次；示例额度按实际授权设置，耗尽不自动扩额。失败、未知发送、无合理修订均保留预留和用量；模型可返回 `{"noRevision":"原因"}`，相同指南也不会强造新版本。
+
+修订只使用明确选择的反馈和固定父版本，不自动混入其他技能。请求与候选保存选定事实快照、来源、开发清单摘要、改动理由和内容差异；任务后续更新待办不会改写已选快照。新确认经验需继续通过既有人工确认和来源检查，使用记录本身不等于允许自动提炼。
+
+Lab 输入必须提供 `--feedback-catalog`，核对实际初始文件与冻结开发场景，拒绝正式、未知和不匹配的结果。含新确认经验的 Lab 反馈需先通过现有重置流程保留原任务归档，再加 `--feedback-source '该归档/workspace'`；控制与技能主来源仍沿用 `@library`，不能把历史源码复制回模型工作根。当前工作区的纯使用事实可直接冻结，之后正常重置试用。
+
+修订候选仍未启用，必须重新进行相关开发试用和不适用反例核验。新发布还要覆盖冻结清单 `required-regression` 的所有必要旧开发样例；主正反例已经覆盖的场景无需重复，其他试用通过 `--regression-trials '旧试用ID1,旧试用ID2'` 绑定到 `--skill-review` / `--approve-skill`。配置、清单、候选摘要或证据不符都会阻止批准。最终仍须精确人工确认，原版与旧批准记录保留。
+
 ## 审批与异常处理
 
 普通写入、命令操作可能要求确认。可信任务可加 `--yes` 跳过这些普通审批，但它不能批准下列独立决定。非交互运行遇到必须人工确认的情况会暂停，不等待管道输入。

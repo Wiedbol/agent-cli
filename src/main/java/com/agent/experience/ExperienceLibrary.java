@@ -87,6 +87,7 @@ public final class ExperienceLibrary {
             var confirmed = new Experience(1, proposal.id(), project(), advice, task.id, task.acceptanceVersion,
                     source.baseline(), source.verification(), source.repairs(), System.currentTimeMillis(), true);
             save(confirmed);
+            com.agent.skill.SkillFeedback.confirmed(root, confirmed, current);
             out.println("已保存经验: " + confirmed.id());
             return true;
         }

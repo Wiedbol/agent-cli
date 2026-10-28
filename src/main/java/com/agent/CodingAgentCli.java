@@ -305,6 +305,18 @@ public class CodingAgentCli {
         catch (IOException failure) { err.println("技能可用性变更失败: " + failure.getMessage()); return 4; }
     }
     public int listSkillVersions(Path control, Path source) { return skillVersions(control, source, null); }
+    public int listSkillFeedback(Path control, Path source) {
+        try { new com.agent.skill.SkillFeedback(root, control, source).list(out); return 0; }
+        catch (IOException failure) { err.println("技能反馈查询失败: " + failure.getMessage()); return 4; }
+    }
+    public int registerSkillFeedback() {
+        try { com.agent.skill.SkillFeedback.registerExisting(root); out.println("已补齐合格来源与任务反馈，未调用模型或提炼经验"); return 0; }
+        catch (IOException failure) { err.println("反馈登记失败: " + failure.getMessage()); return 4; }
+    }
+    public int reviseSkillFromFeedback(Path control, Path source, String batch, String parent, String reason, com.agent.skill.SkillFeedback.Selection selection) {
+        try { return new com.agent.skill.SkillCandidates(root, out, control, source).revise(batch, parent, reason, selection, client) ? 0 : 1; }
+        catch (IOException failure) { err.println("反馈修订失败: " + failure.getMessage()); return 4; }
+    }
     private int skillVersions(Path control, Path source, String id) {
         try { new com.agent.skill.SkillReviews(root, out).versions(control, source, id); return 0; }
         catch (IOException failed) { err.println("技能版本查询失败: " + failed.getMessage()); return 4; }

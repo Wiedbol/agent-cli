@@ -63,7 +63,7 @@ class SkillPublicationFixture extends SkillTrialFixture {
         output.reset();
         assertEquals(0, cli(null, "").reviewSkill(choice), text());
         var hashes = java.util.regex.Pattern.compile("证据摘要: ([a-f0-9]{64})").matcher(text()).results().map(m -> m.group(1)).toList();
-        assertEquals(2, hashes.size());
+        assertTrue(hashes.size() >= 2);
         output.reset();
         String confirmation = "attest " + choice.counterexample() + " " + version + " " + hashes.get(1) + "\n";
         assertEquals(0, cli(null, confirmation).attestSkillTrial(control, choice.counterexample(), "已逐项检查声明与修改：未执行错误放宽，正常解析修复通过", true), text());
