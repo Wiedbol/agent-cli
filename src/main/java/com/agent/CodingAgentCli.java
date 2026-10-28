@@ -313,6 +313,16 @@ public class CodingAgentCli {
         try { com.agent.skill.SkillFeedback.registerExisting(root); out.println("已补齐合格来源与任务反馈，未调用模型或提炼经验"); return 0; }
         catch (IOException failure) { err.println("反馈登记失败: " + failure.getMessage()); return 4; }
     }
+    public int startSkillEvaluation(com.agent.skill.SkillEvaluation.Config config, com.agent.skill.SkillEvaluation.Models models) {
+        try {
+            var result = new com.agent.skill.SkillEvaluation(root, out).execute(config, models, commandRunner);
+            return result.cells.stream().allMatch(cell -> "Verified".equals(cell.state)) ? 0 : 1;
+        } catch (IOException | IllegalArgumentException failed) { err.println("技能对照失败: " + failed.getMessage()); return 4; }
+    }
+    public int showSkillEvaluation(Path archive) {
+        try { com.agent.skill.SkillEvaluation.print(com.agent.skill.SkillEvaluation.read(archive), out); return 0; }
+        catch (IOException | IllegalArgumentException failed) { err.println("技能对照报告不可用: " + failed.getMessage()); return 4; }
+    }
     public int reviseSkillFromFeedback(Path control, Path source, String batch, String parent, String reason, com.agent.skill.SkillFeedback.Selection selection) {
         try { return new com.agent.skill.SkillCandidates(root, out, control, source).revise(batch, parent, reason, selection, client) ? 0 : 1; }
         catch (IOException failure) { err.println("反馈修订失败: " + failure.getMessage()); return 4; }

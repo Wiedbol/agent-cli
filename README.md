@@ -368,6 +368,43 @@ java -jar $agentJar --root $projectRoot --task '修复金额计算' --no-experie
 
 路径校验、敏感文件保护、高危命令拦截和落盘脱敏用于降低误操作风险，不能替代操作系统级隔离。脱敏是规则匹配，不能保证发现任意秘密；被过滤而无法可靠恢复或提炼的必要内容会导致拒绝。请在可信项目中运行，审阅修改和命令，不把密钥交给模型处理。任务恢复不承诺任意中断位置的恰好一次执行，也不提供自动回滚。
 
+## 冻结技能版本的六格对照
+
+已有经过审核的初始 v1 和基于其开发使用反馈修订的 v2 后，可使用独立入口 `com.agent.evaluation.SkillEvaluationMain`。旧 `EvaluationMain` 的十八次经验对照协议保持原样。新入口先冻结同一技能的两个批准版本、来源/开发证据、三个正式输入、模型配置和交错顺序，默认各版本每场景一次；`repeats` 可显式设为 1–100。没有合格 v2 会拒绝准备，不自动生成或选取版本。
+
+外部配置示例（替换路径和 UUID；输入集合为 `{场景ID: {"goal": "...", "files": {"相对路径": "原始内容"}}}`，必须与清单中三个正式场景的摘要完全一致）：
+
+```json
+{
+  "control": "E:/repair-control",
+  "source": "E:/repair-control/history/来源归档UUID/workspace",
+  "catalog": "E:/repair-materials/MANIFEST.json",
+  "inputs": "E:/repair-materials/initials.json",
+  "archive": "E:/repair-results-new",
+  "v1": "已批准初始版本UUID",
+  "v2": "已批准反馈修订版本UUID",
+  "model": "offline-model",
+  "endpoint": "http://127.0.0.1:18080/chat/completions",
+  "taskRequests": 3,
+  "batchRequests": 18,
+  "repeats": 1,
+  "simulated": true
+}
+```
+
+```powershell
+# 本机 HTTP 替身模拟；不读取 Key，不允许远程模拟端点
+java '-Dagent.encoding=UTF-8' -cp target/agent-cli-0.1.0.jar com.agent.evaluation.SkillEvaluationMain --simulate E:/repair-workspace E:/repair-materials/config.json
+# 只读检查；不调用模型、验收或修改账本
+java '-Dagent.encoding=UTF-8' -cp target/agent-cli-0.1.0.jar com.agent.evaluation.SkillEvaluationMain --report E:/repair-results-new
+```
+
+工作根必须是同项目的独立规范 Repair Lab v2 工作区；输出归档必须不存在，与工作根和来源控制目录分离且同文件系统。旧现场和每格结果分别保留在 `preparation-root`、`run-N`，全部请求的发送前预留、实际消息/工具审计及检查结果保留在 `report.json`。模型只经普通目录和 `load_skill` 读取当前固定版本，不能访问外部答案、来源、另一版本或上一格记录；只允许运行冻结的 `mvn test`，保护验收、身份和目标输入。冻结内容变化会阻断后续格。
+
+报告逐格列出状态、基线后的独立修复验收轮次、请求/工具/加载、token、耗时、人工介入、声明及反例观察；失败、暂停、异常、未匹配、未加载和未知用量均保留，不自动重跑或挑最好结果。准备与开发成本另列；历史提炼未记录的消耗明确为未知，已知小计与正式/全流程总量分开，未知不按零计。请求上限不等于精确 token 或费用上限。中断后可检查已保存的 PLANNED/RUNNING/RESERVED 记录，其完成结果仍未知，不支持整批自动续跑。
+
+`SIMULATED` 只证明工程闭环。另行批准真实模型及额度后，才可将配置设为 `simulated: false`、冻结真实模型/端点并显式使用 `--real <工作根> <配置>`；该入口会产生真实请求。正式结果不能用于选择或修订本轮 v2，六格只能作探索性描述，允许无收益、退化或未知。
+
 ## 退出码与常见问题
 
 | 退出码 | 含义 |

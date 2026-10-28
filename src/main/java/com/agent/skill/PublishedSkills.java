@@ -13,10 +13,19 @@ public final class PublishedSkills implements SkillKnowledge {
     private final PrintStream out;
     private SkillTask state;
     private TaskRecord task;
+    private SkillStore.Snapshot frozenSnapshot;
+    private FrozenCheck frozenCheck;
+    @FunctionalInterface interface FrozenCheck { void check() throws IOException; }
     public PublishedSkills(Path root, PrintStream out, Path control, Path source) throws IOException {
         this.root = root.toRealPath(); this.out = out; state = new SkillTask();
         if ((control == null) != (source == null)) { throw new IOException("技能库控制与来源必须成对指定"); }
         if (source != null) { state.control = SkillTrials.canonical(control).toString(); state.source = SkillTrials.canonical(source).toString(); }
+    }
+    static PublishedSkills frozen(Path root, PrintStream out, Path control, Path source, SkillStore.Snapshot snapshot, FrozenCheck check) throws IOException {
+        var knowledge = new PublishedSkills(root, out, control, source);
+        knowledge.state.fixed = reference(snapshot);
+        knowledge.frozenSnapshot = snapshot; knowledge.frozenCheck = check;
+        return knowledge;
     }
     /** 先恢复已校验的绑定；外部目录失效由任务循环保存暂停原因，不能在进入检查点前丢失现场。 */
     public static PublishedSkills restore(Path root, PrintStream out, SkillTask saved) throws IOException {
@@ -36,14 +45,21 @@ public final class PublishedSkills implements SkillKnowledge {
         }
         this.task = task; SkillTask.validate(task); new TaskStore(root).save(task);
     }
-    @Override public boolean isProtected(Path path) { return state.source != null && path.equals(root.resolve(".repair-lab-workspace.json")); }
-    private static SkillTask.Reference reference(SkillStore.Snapshot snapshot) throws IOException {
+    @Override public boolean isProtected(Path path) {
+        return state.source != null && (path.equals(root.resolve(".repair-lab-workspace.json"))
+                || state.fixed != null && path.equals(root.resolve("GOAL.md")));
+    }
+    static SkillTask.Reference reference(SkillStore.Snapshot snapshot) throws IOException {
         var version = snapshot.version();
         return new SkillTask.Reference(version.skillId(), version.id(), SkillStore.digest(version), version.candidateSha256(),
                 WorkspaceSnapshot.hash(snapshot.candidate().guide().markdown().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
     private SkillStore.Snapshot resolve(SkillTask.Reference reference) throws IOException {
-        var snapshot = store().snapshot(reference.versionId());
+        SkillStore.Snapshot snapshot;
+        if (frozenSnapshot != null && reference.equals(state.fixed)) {
+            // 评测已核验真实来源链；仅在整个冻结归档逐文件仍一致时复用，普通恢复仍走完整核验。
+            store(); frozenCheck.check(); snapshot = frozenSnapshot;
+        } else { snapshot = store().snapshot(reference.versionId()); }
         if (!reference.equals(reference(snapshot))) { throw new IOException("固定技能版本或摘要已改变"); }
         return snapshot;
     }
@@ -51,8 +67,9 @@ public final class PublishedSkills implements SkillKnowledge {
         try {
             store();
             var snapshots = new LinkedHashMap<SkillTask.Reference, SkillStore.Snapshot>();
+            SkillStore.Snapshot fixed = state.fixed == null ? null : resolve(state.fixed);
             for (var pin : state.loaded) {
-                var snapshot = resolve(pin);
+                var snapshot = pin.equals(state.fixed) ? fixed : resolve(pin);
                 String failure = SkillMatching.conditionFailure(snapshot.candidate().guide().conditions(), task.files);
                 if (failure != null) { throw new IOException(failure); }
                 snapshots.put(pin, snapshot);
@@ -62,6 +79,7 @@ public final class PublishedSkills implements SkillKnowledge {
     }
     @Override public void check() { checkedSnapshots(); }
     private List<SkillStore.Snapshot> defaults() throws IOException {
+        if (state.fixed != null) { return List.of(resolve(state.fixed)); }
         var store = store(); var latest = new TreeMap<String, SkillStore.Version>();
         for (String id : store.ids("versions")) {
             SkillStore.Version version;

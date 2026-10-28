@@ -7,6 +7,8 @@ import java.util.*;
 /** 固定知识版本与请求事实随任务原子保存，消费仍由原任务账本统计。 */
 public final class SkillTask {
     public String control, source;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    public Reference fixed;
     public int firstRequest = 1;
     public List<Reference> offered = new ArrayList<>(), loaded = new ArrayList<>();
     public List<Event> events = new ArrayList<>();
@@ -23,6 +25,12 @@ public final class SkillTask {
             throw new IOException("任务技能状态缺失或不合法");
         }
         for (var reference : state.offered) { validate(reference); }
+        if (state.fixed != null) {
+            validate(state.fixed);
+            if (state.source == null || state.offered.stream().anyMatch(pin -> !pin.equals(state.fixed))) {
+                throw new IOException("冻结评测只能发现指定的已批准版本");
+            }
+        }
         for (var reference : state.loaded) { validate(reference); if (!state.offered.contains(reference)) { throw new IOException("固定技能缺少目录授权"); } }
         if (state.loaded.stream().map(Reference::skillId).distinct().count() != state.loaded.size()) { throw new IOException("固定技能身份重复"); }
         if (state.control != null) {
