@@ -91,6 +91,23 @@ class CodingAgentCliSkillCandidateTest {
         assertTrue(model.toolRequests().get(0).isEmpty());
     }
 
+    @Test void shouldRequestTransferHypothesesWithoutRewritingConfirmedExperience() throws Exception {
+        String experience = experience();
+        Path source = root.resolve(".agent/experiences/" + experience + ".json");
+        byte[] original = Files.readAllBytes(source);
+        String batch = batch(1);
+        var model = new FakeLLMClient(List.of(new LLMResponse(GUIDE, null, 7, 11)));
+        assertEquals(0, cli(model, "").generateSkillCandidate(batch, List.of(experience), null, null), text());
+        String prompt = model.requests().get(0).get(0).content();
+        for (String requirement : List.of("可迁移的诊断流程", "待验证的迁移假设", "不得直接照搬来源中的具体常数")) {
+            assertTrue(prompt.contains(requirement), prompt);
+        }
+        assertTrue(prompt.contains(experience) && prompt.contains("检查边界并独立验收"), prompt);
+        assertArrayEquals(original, Files.readAllBytes(source));
+        assertTrue(text().contains("启用: false") && text().contains("迁移验证: 未验证"), text());
+        assertEquals(1, model.callCount());
+    }
+
     @Test void shouldReserveSourceAndTargetBeforeSendingAndKeepFailedRequestAfterRestart() throws Exception {
         String experience = experience();
         String batch = batch(1);
