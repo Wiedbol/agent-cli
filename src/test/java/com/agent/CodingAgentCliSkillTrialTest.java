@@ -15,18 +15,60 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
+    @Test void shouldNotTreatFirstKnowledgeReviewMilestonesAsFailedRepairRounds() throws Exception {
+        prepare();
+        var model = new FakeLLMClient(List.of(
+                calls(call("load", "load_skill", Map.of("id", candidate, "version", version)), call("list", "list_files", Map.of("path", "."))),
+                calls(call("read", "read_file", Map.of("path", SOURCE))),
+                calls(call("accept", "declare_skill", Map.of("id", candidate, "version", version, "decision", "ACCEPT", "reason", "先核实边界再修复"))),
+                calls(call("edit", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))),
+                new LLMResponse("请独立验收", null, 1, 1)));
+        assertEquals(0, cli(model, "").startSkillTrial(config(5)), text());
+        assertEquals(5, model.callCount());
+        assertTrue(text().contains("状态: VERIFIED"), text());
+    }
+
     @Test void shouldContinueToCompletionAfterPassingPeriodicAcceptance() throws Exception {
         prepare();
         var model = new FakeLLMClient(List.of(
                 calls(call("load", "load_skill", Map.of("id", candidate, "version", version))),
                 calls(call("read", "read_file", Map.of("path", SOURCE))),
+                calls(call("read-again", "read_file", Map.of("path", SOURCE))),
                 calls(call("edit", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))),
                 new LLMResponse("请独立验收", null, 1, 1)));
-        assertEquals(0, cli(model, "").startSkillTrial(config(4)), text());
-        assertEquals(4, model.callCount());
+        assertEquals(0, cli(model, "").startSkillTrial(config(5)), text());
+        assertEquals(5, model.callCount());
         assertTrue(text().contains("状态: VERIFIED"), text());
         assertFalse(text().contains("试用需要有效的独立失败基线"), text());
         assertEquals("dev-fixed", Files.readString(root.resolve(SOURCE)));
+    }
+
+    @Test void shouldStillPauseOnRepeatedKnowledgeDeclarationsWithChangingReasons() throws Exception {
+        prepare();
+        var responses = new ArrayList<LLMResponse>();
+        responses.add(calls(call("load", "load_skill", Map.of("id", candidate, "version", version))));
+        for (int i = 0; i < 4; i++) {
+            responses.add(calls(call("declare-" + i, "declare_skill", Map.of("id", candidate, "version", version,
+                    "decision", "ACCEPT", "reason", "第" + i + "次声明，尚未修复"))));
+        }
+        var model = new FakeLLMClient(responses);
+        assertEquals(1, cli(model, "").startSkillTrial(config(6)), text());
+        assertEquals(5, model.callCount());
+        assertTrue(text().contains("同一核心错误持续三个决策轮次"), text());
+        assertEquals("dev-broken", Files.readString(root.resolve(SOURCE)));
+    }
+
+    @Test void shouldStillCountRepairRoundsContainingFirstDeclaration() throws Exception {
+        prepare();
+        var model = new FakeLLMClient(List.of(
+                calls(call("load", "load_skill", Map.of("id", candidate, "version", version))),
+                calls(call("accept", "declare_skill", Map.of("id", candidate, "version", version, "decision", "ACCEPT", "reason", "尝试修复")),
+                        call("edit1", "write_file", Map.of("path", SOURCE, "content", "dev-broken"))),
+                calls(call("edit2", "write_file", Map.of("path", SOURCE, "content", "dev-broken"))),
+                calls(call("edit3", "write_file", Map.of("path", SOURCE, "content", "dev-broken")))));
+        assertEquals(1, cli(model, "").startSkillTrial(config(5)), text());
+        assertEquals(4, model.callCount());
+        assertTrue(text().contains("同一核心错误持续三个决策轮次"), text());
     }
 
     @Test void shouldStillRejectPassingInitialBaselineBeforeAnyModelRequest() throws Exception {

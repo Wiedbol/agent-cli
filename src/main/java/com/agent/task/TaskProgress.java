@@ -173,11 +173,23 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
     }
 
     @Override public void roundFinished() {
-        advanceRound();
+        if (!firstKnowledgeProgress()) { advanceRound(); }
         decision.roundFinished = true;
         if (repeated()) { task.checkpoint.beginAcceptance(false); }
         save();
         if (repeated()) { throw new Recheck(); }
+    }
+
+    /** 首次有效知识审阅是准备进展；仅豁免成功只读轮，避免尚未修复就被判为连续修复失败。 */
+    private boolean firstKnowledgeProgress() {
+        if (decision.operations.isEmpty() || decision.operations.stream().anyMatch(op ->
+                op.status != OperationState.SUCCEEDED || !Tool.Risk.READ.name().equals(op.risk) || !op.changes.isEmpty())) {
+            return false;
+        }
+        return decision.operations.stream().anyMatch(op -> (op.tool.equals("load_skill") || op.tool.equals("declare_skill"))
+                && task.progress.decisions.stream().filter(previous -> previous != decision)
+                .flatMap(previous -> previous.operations.stream())
+                .noneMatch(previous -> previous.status == OperationState.SUCCEEDED && previous.tool.equals(op.tool)));
     }
 
     /** 第三个决策轮次须用新报告确认旧错误，不能把尚未验收的修改直接判为失败。 */
