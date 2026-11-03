@@ -84,6 +84,8 @@ $library = @('--root', $work, '--trial-control', $control, '--trial-source', $so
 
 ## 新 Lab 阶段与真实运行前审查
 
+显式开发试用是对操作者指定候选的受控审阅：模型先通过 `load_skill` 读取，再声明 ACCEPT/REJECT，不适用时须拒绝并独立修复。指南仍只能由真实加载工具进入请求，审核门槛保持不变。这类试用不代表自主检索或迁移收益；普通 SKILL 任务和正式对照仍自主选择是否读取。旧的未加载或暂停记录保持原结果，不因协议调整变为成功。
+
 本轮若选用 `deepseek-flash`，客户端显式关闭思考模式，以适配现有工具消息协议；可通过 `'-Dagent.deepseek.model=deepseek-flash'` 指定，默认模型名称保持原值。管理任务和经验提炼均按一次逻辑请求只发送一次处理，连接中断或拒绝不会由 HTTP 层自动重试。更换模型或协议设置需要在真实额度清单中明确记录。
 
 完整输入及预期失败见 [Lab v2 MANIFEST](../../examples/repair-lab-v2/MANIFEST.json)，控制器和参考答案必须留在模型根外：

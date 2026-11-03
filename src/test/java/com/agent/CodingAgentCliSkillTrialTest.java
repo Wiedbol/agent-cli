@@ -54,6 +54,8 @@ class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
                 new LLMResponse("请独立验收", null, 7, 11)));
         assertEquals(0, cli(model, "").startSkillTrial(config(4)), text());
         String trial = id("技能试用");
+        assertTrue(model.requests().get(0).toString().contains("显式候选审阅"));
+        assertTrue(model.requests().get(0).toString().contains("ACCEPT 或 REJECT"));
         assertFalse(model.requests().get(0).toString().contains("SKILL_GUIDE_PRIVATE_MARKER"));
         assertTrue(model.requests().get(1).toString().contains("SKILL_GUIDE_PRIVATE_MARKER"));
         assertFalse(model.requests().toString().contains("OTHER_CANDIDATE_SECRET"));
