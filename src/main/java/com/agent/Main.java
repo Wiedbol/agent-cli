@@ -403,6 +403,7 @@ public class Main {
                   --trial-skill C --skill-batch B --trial-control A --trial-source S
                     --trial-catalog M --trial-max-steps N 指定候选的隔离有界开发试用
                   --skill-trial T / --skill-trials --trial-control A 无 Key 查看试用及最终请求审计
+                  --resume-skill-trial ID --trial-control A --trial-max-steps N --review-note TEXT 续做原预算暂停试用，N为累计上限
                   --skill-review C --skill-digest H --trial-control A --trial-source S 查看候选及差异
                   --related-trial P --counterexample-trial N 审核或批准时绑定正反例
                   --attest-skill-trial N --trial-control A --review-note TEXT 交互核验反例轨迹

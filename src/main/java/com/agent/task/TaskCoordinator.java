@@ -87,10 +87,25 @@ public final class TaskCoordinator {
 
     /** 恢复必须持有同一项目写锁；旧版本或未知副作用只暂停，不推断结果。 */
     public TaskRecord resume(String id, boolean interactive) throws IOException, InterruptedException {
+        return resume(id, interactive, false);
+    }
+
+    /** 只有原试用控制层绑定相同标识时才能续做，普通恢复入口仍拒绝试用任务。 */
+    public TaskRecord resumeTrial(String id, boolean interactive) throws IOException, InterruptedException {
+        return resume(id, interactive, true);
+    }
+
+    public static void requireResumableTrial(TaskRecord task) throws IOException {
+        try { TaskCheckpoint.requireResumable(task); }
+        catch (TaskProgress.Pause invalid) { throw new IOException(invalid.getMessage(), invalid); }
+    }
+
+    private TaskRecord resume(String id, boolean interactive, boolean controlledTrial) throws IOException, InterruptedException {
         TaskStore store = new TaskStore(root);
         try (TaskStore.Writer writer = store.lock()) {
             TaskRecord task = store.read(id);
-            if (task.skillTrialId != null) { throw new IOException("试用任务必须通过原试用控制入口处理，不能普通恢复"); }
+            if (controlledTrial ? knowledge == null || task.skillTrialId == null || !task.skillTrialId.equals(knowledge.trialId())
+                    : task.skillTrialId != null) { throw new IOException("试用任务必须通过原试用控制入口处理，不能普通恢复"); }
             if (knowledge != null) { knowledge.bind(task); }
             if (task.state == TaskRecord.State.Abandoned) { throw new IOException("已放弃任务不能恢复"); }
             return executeWithFeedback(store, task, interactive, true);

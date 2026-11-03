@@ -17,6 +17,7 @@ final class TrialSkillKnowledge implements SkillKnowledge {
     private String catalog = "";
     TrialSkillKnowledge(SkillTrials trials, SkillTrial record, SkillStore source) throws IOException {
         this.trials = trials; this.record = record; this.source = source; candidate = source.candidate(record.candidateId);
+        if (record.taskId != null) { catalog = directory(); }
     }
     public String trialId() { return record.id; }
     public void bind(TaskRecord task) throws IOException {
@@ -41,14 +42,17 @@ final class TrialSkillKnowledge implements SkillKnowledge {
         if (!catalog.isEmpty()) { return ""; }
         String failure = SkillMatching.conditionFailure(candidate.guide().conditions(), task.files);
         if (failure != null) { event("CATALOG_EXCLUDED", false, failure); return ""; }
-        catalog = "\n修复技能试用目录（显式候选审阅；未启用候选，仅本次可加载）: " + record.candidateId + "@" + record.candidateSha256
+        catalog = directory();
+        event("CATALOG", true, "目录已组装，等待请求结果");
+        return catalog;
+    }
+    private String directory() {
+        return "\n修复技能试用目录（显式候选审阅；未启用候选，仅本次可加载）: " + record.candidateId + "@" + record.candidateSha256
                 + "\n摘要: " + shortText(candidate.guide().title()) + "\n适用: " + shortText(candidate.guide().conditions())
                 + "\n不适用: " + shortText(candidate.guide().exclusions())
                 + "\n匹配原因: 操作者指定的开发候选；来源与项目已核验。"
                 + "\n审阅协议: 请先通过 load_skill 按上述 id/version 读取完整候选，再根据新任务目标和失败证据用 declare_skill 声明 ACCEPT 或 REJECT 并说明原因。"
                 + "若不适用，应明确拒绝，不得套用；继续独立修复并完成冻结验收。";
-        event("CATALOG", true, "目录已组装，等待请求结果");
-        return catalog;
     }
     private static String shortText(String text) { return text.length() <= 240 ? text : text.substring(0, 240) + "…"; }
     private void selection(ToolRequest request, int fields) {

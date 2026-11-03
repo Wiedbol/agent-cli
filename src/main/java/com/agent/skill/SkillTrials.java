@@ -167,6 +167,90 @@ public final class SkillTrials {
             }
         }
     }
+    /** 仅续做已知结果的预算暂停；归档旧快照后追加请求，不能通过普通恢复或复制记录绕过冻结约束。 */
+    public int resume(Path control, String id, int maximum, String note, String modelName, String endpoint,
+                      LLMClient model, CommandRunner commands) throws IOException {
+        if (model == null || note == null || note.isBlank() || note.length() > 2000) { throw new IOException("恢复需要模型及明确审核说明"); }
+        SkillStore.requireSafe(note);
+        var record = readTrial(canonical(control), id);
+        Path folder = directory(control, id), pending = folder.resolve("resume-pending.json");
+        if (Files.exists(pending)) { throw new IOException("先前恢复准备未完成，需人工检查；不自动重试"); }
+        if (!"PAUSED".equals(record.status) || !budgetPause(record.reason)
+                || record.requests.stream().anyMatch(r -> !"RESPONDED".equals(r.status))
+                || !Objects.equals(record.model, modelName) || !Objects.equals(record.configuration.get("endpoint"), endpoint)
+                || maximum <= record.maxRequests) { throw new IOException("只能按原模型/配置明确提高已知预算暂停试用的总额度"); }
+        try (var sourceLock = new TaskStore(Path.of(record.source)).lock()) {
+            var sourceStore = SkillStore.archived(Path.of(record.source), root);
+            check(record, sourceStore);
+            var batch = sourceStore.batch(record.batchId);
+            int before = record.maxRequests, batchBefore = batch.limit;
+            int delta = maximum - before;
+            int extra = Math.max(0, delta - (batch.limit - batch.requests.size()));
+            try { batch.limit = Math.addExact(batch.limit, extra); }
+            catch (ArithmeticException invalid) { throw new IOException("批次额度溢出", invalid); }
+            var tasks = new TaskStore(root);
+            try (var taskLock = tasks.lock()) {
+                var task = tasks.read(record.taskId);
+                TaskCoordinator.requireResumableTrial(task);
+                if (task.state != TaskRecord.State.Paused || task.progress.requests != record.requests.size()
+                        || task.progress.maxRequests != before || task.progress.requests != before
+                        || !record.id.equals(task.skillTrialId) || !WorkspaceSnapshot.capture(root).equals(task.files)
+                        || !budgetPause(task.reason)
+                        || task.progress.decisions.stream().anyMatch(d -> d.status != TaskRecord.DecisionState.RESPONDED
+                        || d.operations.stream().anyMatch(op -> !op.finished()))) {
+                    throw new IOException("当前试用现场、请求或操作结果不可安全续做");
+                }
+                String condition = SkillMatching.conditionFailure(sourceStore.candidate(record.candidateId).guide().conditions(), task.files);
+                if (condition != null) { throw new IOException(condition); }
+                Path result = canonical(folder.resolve("result-root"));
+                Path taskFile = Path.of(".agent/tasks/" + record.taskId + "/state.json");
+                if (!result.startsWith(control) || !Arrays.equals(Files.readAllBytes(root.resolve(taskFile)), Files.readAllBytes(result.resolve(taskFile)))) {
+                    throw new IOException("当前检查点与暂停归档不一致");
+                }
+                Path history = folder.resolve("resumptions").resolve(UUID.randomUUID().toString());
+                Files.createDirectories(history);
+                if (!canonical(history).startsWith(control)) { throw new IOException("恢复历史越出归档"); }
+                byte[] original = Files.readAllBytes(folder.resolve("state.json"));
+                var intent = Map.of("trial", id, "before", before, "after", maximum, "batchBefore", batchBefore,
+                        "batchAfter", batch.limit, "note", note, "previousStateSha256", WorkspaceSnapshot.hash(original));
+                byte[] intentBytes = SkillStore.JSON.writeValueAsBytes(intent);
+                atomic(pending, intentBytes);
+                atomic(history.resolve("state.json"), original);
+                atomic(history.resolve("intent.json"), intentBytes);
+                Files.move(result, history.resolve("result-root"), StandardCopyOption.ATOMIC_MOVE);
+                task.progress.budgetChanges.add(new TaskRecord.BudgetChange(before, maximum, System.currentTimeMillis()));
+                task.progress.maxRequests = maximum;
+                tasks.save(task);
+                record.maxRequests = maximum;
+                record.events.add(new SkillTrial.Event("RESUME_APPROVED", null, true, SkillStore.JSON.writeValueAsString(intent)));
+                sourceStore.write("batches", batch.id, batch);
+                save(record);
+                Files.delete(pending);
+            }
+            out.println("技能试用: " + id);
+            var knowledge = new TrialSkillKnowledge(this, record, sourceStore);
+            CommandRunner restricted = (dir, command, timeout) -> {
+                if (!root.equals(dir.toRealPath()) || !record.command.equals(command)) { throw new SecurityException("试用只允许冻结验收命令"); }
+                return commands.run(dir, command, 60);
+            };
+            boolean finished = false;
+            try {
+                var cli = new CodingAgentCli(root, model, true, maximum, new BufferedReader(new StringReader("")), out, out, null, restricted);
+                int code = cli.resumeManagedTask(record.taskId, false, knowledge);
+                record.status = code == 0 ? "VERIFIED" : code == 1 ? "PAUSED" : "ERROR";
+                finished = true;
+                return code;
+            } finally {
+                if (!finished) { record.status = "UNKNOWN"; }
+                archiveResult(record); save(record); print(record);
+            }
+        }
+    }
+
+    private static boolean budgetPause(String reason) {
+        return reason != null && (reason.startsWith("累计模型请求预算已耗尽") || reason.startsWith("达到最大步数限制"));
+    }
+
     void check(SkillTrial record, SkillStore sourceStore) throws IOException {
         var marker = identity(Path.of(record.control));
         if (!record.projectId.equals(marker.path("projectId").asText())

@@ -275,6 +275,10 @@ public class CodingAgentCli {
         try { return new com.agent.skill.SkillTrials(root, out).start(config, client, commandRunner); }
         catch (IOException | java.io.UncheckedIOException failed) { err.println("技能试用失败: " + failed.getMessage()); return 4; }
     }
+    public int resumeSkillTrial(Path control, String id, int maximum, String note, String model, String endpoint) {
+        try { return new com.agent.skill.SkillTrials(root, out).resume(control, id, maximum, note, model, endpoint, client, commandRunner); }
+        catch (IOException | java.io.UncheckedIOException failed) { err.println("试用恢复失败: " + failed.getMessage()); return 4; }
+    }
     public int showSkillTrial(Path control, String id) {
         try { new com.agent.skill.SkillTrials(root, out).show(control, id); return 0; }
         catch (IOException failed) { err.println("试用查询失败: " + failed.getMessage()); return 4; }
@@ -426,15 +430,21 @@ public class CodingAgentCli {
 
     /** 本次普通工具审批选择独立于上次进程，不继承旧 --yes。 */
     public int resumeManagedTask(String id, boolean interactive) {
+        return resumeManagedTask(id, interactive, null);
+    }
+
+    /** 受控试用复用可靠检查点和原加载审计，调用方不能用普通知识库替换试用快照。 */
+    public int resumeManagedTask(String id, boolean interactive, com.agent.skill.SkillKnowledge trialKnowledge) {
         if (client == null) { err.println("任务需要模型配置"); return 2; }
         try {
             var saved = new TaskStore(root).read(id);
-            com.agent.skill.SkillKnowledge knowledge = saved.knowledgeMode == KnowledgeMode.SKILL
+            com.agent.skill.SkillKnowledge knowledge = trialKnowledge != null ? trialKnowledge : saved.knowledgeMode == KnowledgeMode.SKILL
                     ? com.agent.skill.PublishedSkills.restore(root, out, saved.skills) : null;
             LLMClient managedClient = knowledge == null ? client : knowledge.audit(client);
-            TaskRecord task = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
+            var coordinator = new TaskCoordinator(root, commandRunner, (managedSession, protection, managedRunner) ->
                     new CodingAgentCli(root, managedClient, user.autoApprove(), maxSteps, in, out, err,
-                            managedSession, managedRunner, protection, knowledge).controller, out, knowledge).resume(id, interactive);
+                            managedSession, managedRunner, protection, knowledge).controller, out, knowledge);
+            TaskRecord task = trialKnowledge == null ? coordinator.resume(id, interactive) : coordinator.resumeTrial(id, interactive);
             return printTask(task) == TaskRecord.State.Verified ? 0 : 1;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); err.println("任务恢复被中断"); return 4;

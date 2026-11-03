@@ -61,6 +61,8 @@ $library = @('--root', $work, '--trial-control', $control, '--trial-source', $so
 
 这些 ID/来源路径来自保存的输出和记录，不猜测“最新”版本。报告会检查每格原始归档哈希；Verified 还要对应实际任务、固定版本、初始输入和独立验收。反例观察保留全部验收和实际操作，早先破坏约束不能被最后修好抹去；原语法失败、REJECT 声明或最终通过均不能单独证明技能误用或无误用，证据不足保留 UNKNOWN。
 
+只有结果已知、所有操作结束且仅因预算耗尽暂停的试用，才可明确使用 `--resume-skill-trial ID --trial-control A --trial-max-steps N --review-note TEXT` 续做；`N` 是增加后的累计任务上限。原模型/端点、项目/候选/来源/验收及现场必须一致，未知副作用或其他暂停原因会拒绝。旧状态与结果快照保存在该试用的 `resumptions/`，原请求和已完成工具不重放；预算变更另行留痕，不能用普通 `--resume-task` 或单独任务扩额绕过控制。准备中断留下 `resume-pending.json` 时先人工检查，不自动续做。
+
 ## 三种知识模式与恢复
 
 新管理任务通过 `--knowledge-mode none|experience|skill` 选择，默认 `experience`：

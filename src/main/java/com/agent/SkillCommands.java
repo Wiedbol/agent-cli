@@ -12,12 +12,12 @@ import java.util.*;
 final class SkillCommands {
     private static final Set<String> FLAGS = Set.of("--start-skill-batch", "--request-limit", "--generate-skill",
             "--skill-batch", "--revise-skill", "--revision-reason", "--skill-candidates", "--skill-candidate", "--skill-batches",
-            "--trial-skill", "--trial-control", "--trial-source", "--trial-catalog", "--trial-max-steps", "--skill-trial", "--skill-trials",
+            "--trial-skill", "--resume-skill-trial", "--trial-control", "--trial-source", "--trial-catalog", "--trial-max-steps", "--skill-trial", "--skill-trials",
             "--skill-review", "--approve-skill", "--reject-skill", "--attest-skill-trial", "--skill-version", "--skill-versions",
             "--skill-digest", "--related-trial", "--counterexample-trial", "--review-note", "--disable-skill", "--enable-skill",
             "--skill-feedbacks", "--register-skill-feedback", "--revise-from-feedback", "--feedback-source", "--feedback-catalog", "--regression-trials");
     private static final Set<String> SWITCHES = Set.of("--start-skill-batch", "--skill-candidates", "--skill-batches", "--skill-trials", "--skill-versions", "--skill-feedbacks", "--register-skill-feedback");
-    enum Action { START, GENERATE, CANDIDATES, CANDIDATE, BATCHES, BATCH, TRIAL, TRIAL_SHOW, TRIALS, REVIEW, APPROVE, REJECT, ATTEST, VERSION, VERSIONS, DISABLE, ENABLE, FEEDBACKS, REGISTER, REVISION }
+    enum Action { START, GENERATE, CANDIDATES, CANDIDATE, BATCHES, BATCH, TRIAL, RESUME_TRIAL, TRIAL_SHOW, TRIALS, REVIEW, APPROVE, REJECT, ATTEST, VERSION, VERSIONS, DISABLE, ENABLE, FEEDBACKS, REGISTER, REVISION }
     record Options(Action action, Path root, int limit, List<String> sources, String batch, String parent, String reason,
                    String candidate, SkillTrials.Config trial, Path trialControl, String trialId, Path librarySource,
                    com.agent.skill.SkillReviews.Selection review, String note, String digest, String versionId, com.agent.skill.SkillFeedback.Selection feedback) { }
@@ -38,7 +38,7 @@ final class SkillCommands {
         }
         var commands = Map.ofEntries(Map.entry("--start-skill-batch", Action.START), Map.entry("--generate-skill", Action.GENERATE),
                 Map.entry("--skill-candidates", Action.CANDIDATES), Map.entry("--skill-candidate", Action.CANDIDATE), Map.entry("--skill-batches", Action.BATCHES),
-                Map.entry("--trial-skill", Action.TRIAL), Map.entry("--skill-trial", Action.TRIAL_SHOW), Map.entry("--skill-trials", Action.TRIALS),
+                Map.entry("--trial-skill", Action.TRIAL), Map.entry("--resume-skill-trial", Action.RESUME_TRIAL), Map.entry("--skill-trial", Action.TRIAL_SHOW), Map.entry("--skill-trials", Action.TRIALS),
                 Map.entry("--skill-review", Action.REVIEW), Map.entry("--approve-skill", Action.APPROVE), Map.entry("--reject-skill", Action.REJECT),
                 Map.entry("--attest-skill-trial", Action.ATTEST), Map.entry("--skill-version", Action.VERSION), Map.entry("--skill-versions", Action.VERSIONS),
                 Map.entry("--disable-skill", Action.DISABLE), Map.entry("--enable-skill", Action.ENABLE),
@@ -51,6 +51,7 @@ final class SkillCommands {
             case START -> Set.of("--request-limit");
             case GENERATE -> Set.of("--skill-batch");
             case REVISION -> Set.of("--skill-batch", "--revise-skill", "--revision-reason");
+            case RESUME_TRIAL -> Set.of("--trial-control", "--trial-max-steps", "--review-note");
             case TRIAL -> Set.of("--skill-batch", "--trial-control", "--trial-source", "--trial-catalog", "--trial-max-steps");
             case TRIAL_SHOW, TRIALS -> Set.of("--trial-control");
             case ATTEST -> Set.of("--trial-control", "--review-note");
@@ -75,8 +76,9 @@ final class SkillCommands {
         }
         if (options.containsKey("--feedback-source") && !options.containsKey("--trial-control")) { throw new IllegalArgumentException("归档反馈需要受控来源上下文"); }
         int limit = action == Action.START ? Integer.parseInt(options.get("--request-limit")) : 0;
-        int requests = action == Action.TRIAL ? Integer.parseInt(options.get("--trial-max-steps")) : 0;
-        if (action == Action.START && limit <= 0 || action == Action.TRIAL && requests <= 0) { throw new IllegalArgumentException("请求额度必须为正整数"); }
+        int requests = action == Action.TRIAL || action == Action.RESUME_TRIAL ? Integer.parseInt(options.get("--trial-max-steps")) : 0;
+        if (action == Action.RESUME_TRIAL) { limit = requests; }
+        if (action == Action.START && limit <= 0 || (action == Action.TRIAL || action == Action.RESUME_TRIAL) && requests <= 0) { throw new IllegalArgumentException("请求额度必须为正整数"); }
         Path control = options.containsKey("--trial-control") ? Path.of(options.get("--trial-control")) : null;
         Path source = options.containsKey("--trial-source") ? Path.of(options.get("--trial-source")) : null;
         var config = action == Action.TRIAL ? new SkillTrials.Config(control, source, Path.of(options.get("--trial-catalog")), options.get(primary),
@@ -92,7 +94,7 @@ final class SkillCommands {
         return new Options(action, Path.of(options.getOrDefault("--root", ".")).toAbsolutePath().normalize(), limit, sources,
                 options.get("--skill-batch"), options.get("--revise-skill"), options.get("--revision-reason"),
                 Set.of(Action.CANDIDATE, Action.REJECT).contains(action) ? options.get(primary) : null, config, control,
-                action == Action.TRIAL_SHOW || action == Action.ATTEST ? options.get(primary) : null, source, selection,
+                action == Action.TRIAL_SHOW || action == Action.ATTEST || action == Action.RESUME_TRIAL ? options.get(primary) : null, source, selection,
                 options.get("--review-note"), options.get("--skill-digest"), Set.of(Action.VERSION, Action.DISABLE, Action.ENABLE).contains(action) ? options.get(primary) : null, feedback);
     }
     private static List<String> identifiers(String value) {
@@ -104,7 +106,7 @@ final class SkillCommands {
     }
     static int run(Options options) {
         LLMClient model = null;
-        if (options.action() == Action.GENERATE || options.action() == Action.TRIAL || options.action() == Action.REVISION) {
+        if (options.action() == Action.GENERATE || options.action() == Action.TRIAL || options.action() == Action.REVISION || options.action() == Action.RESUME_TRIAL) {
             String key = ApiKeyLoader.loadDeepSeekKey();
             if (key == null || key.isBlank()) { System.err.println("生成或试用需要 DeepSeek Key；技能查询无需 Key"); return 2; }
             model = DeepSeekClient.singleAttempt(key, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel());
@@ -118,6 +120,7 @@ final class SkillCommands {
             case BATCHES -> cli.listSkillBatches(options.trialControl(), options.librarySource());
             case BATCH -> cli.showSkillBatch(options.trialControl(), options.librarySource(), options.batch());
             case TRIAL -> cli.startSkillTrial(options.trial());
+            case RESUME_TRIAL -> cli.resumeSkillTrial(options.trialControl(), options.trialId(), options.limit(), options.note(), DeepSeekClient.defaultModel(), DeepSeekClient.defaultEndpoint());
             case TRIAL_SHOW -> cli.showSkillTrial(options.trialControl(), options.trialId());
             case TRIALS -> cli.listSkillTrials(options.trialControl());
             case REVIEW -> cli.reviewSkill(options.review());
