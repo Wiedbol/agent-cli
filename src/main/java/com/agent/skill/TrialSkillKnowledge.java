@@ -31,6 +31,11 @@ final class TrialSkillKnowledge implements SkillKnowledge {
         catch (IOException failure) { throw new TaskProgress.Pause("技能试用前提失效: " + failure.getMessage()); }
     }
     public String discover(TaskRecord task, TaskAcceptance.Evidence evidence) {
+        // 定期复核可能在模型完成声明前通过；它不是新的失败基线，也不应阻断后续完成声明。
+        if ("final".equals(evidence.kind()) && "PASSED".equals(evidence.verdict()) && evidence.codingAllowed()) {
+            check();
+            return "";
+        }
         if (!evidence.verdict().equals("FAILED") || !evidence.codingAllowed()) { throw new TaskProgress.Pause("试用需要有效的独立失败基线"); }
         check();
         if (!catalog.isEmpty()) { return ""; }

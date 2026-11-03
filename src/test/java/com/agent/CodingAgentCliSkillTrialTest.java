@@ -15,6 +15,37 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
+    @Test void shouldContinueToCompletionAfterPassingPeriodicAcceptance() throws Exception {
+        prepare();
+        var model = new FakeLLMClient(List.of(
+                calls(call("load", "load_skill", Map.of("id", candidate, "version", version))),
+                calls(call("read", "read_file", Map.of("path", SOURCE))),
+                calls(call("edit", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))),
+                new LLMResponse("请独立验收", null, 1, 1)));
+        assertEquals(0, cli(model, "").startSkillTrial(config(4)), text());
+        assertEquals(4, model.callCount());
+        assertTrue(text().contains("状态: VERIFIED"), text());
+        assertFalse(text().contains("试用需要有效的独立失败基线"), text());
+        assertEquals("dev-fixed", Files.readString(root.resolve(SOURCE)));
+    }
+
+    @Test void shouldStillRejectPassingInitialBaselineBeforeAnyModelRequest() throws Exception {
+        prepare();
+        var model = new FakeLLMClient(List.of());
+        CommandRunner passing = (dir, command, timeout) -> {
+            Path reports = Files.createDirectories(root.resolve("target/surefire-reports"));
+            Files.writeString(reports.resolve("TEST-demo.BusinessRulesTest.xml"),
+                    "<testsuite tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"><testcase classname=\"demo.BusinessRulesTest\" name=\"checks\"/></testsuite>");
+            return new com.agent.command.CommandResult(0, false, "offline passing baseline", 1,
+                    com.agent.command.CommandResult.OutputCompleteness.COMPLETE);
+        };
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var cli = new CodingAgentCli(root, model, true, 4, new BufferedReader(new StringReader("")), stream, stream, null, passing);
+        assertEquals(1, cli.startSkillTrial(config(4)), text());
+        assertEquals(0, model.callCount());
+        assertTrue(text().contains("试用需要有效的独立失败基线"), text());
+    }
+
     @Test void shouldLoadOnlySelectedCandidateInNormalLoopAndAuditAfterRestartWithoutKey() throws Exception {
         prepare();
         var model = new FakeLLMClient(List.of(calls(call("load", "load_skill", Map.of("id", candidate, "version", version))),
