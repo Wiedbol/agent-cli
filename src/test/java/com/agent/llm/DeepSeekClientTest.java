@@ -110,6 +110,32 @@ class DeepSeekClientTest {
         assertEquals("system", body.path("messages").get(0).path("role").asText());
         assertEquals("你好", body.path("messages").get(1).path("content").asText());
         assertFalse(body.has("tools"), "没有工具时不应发送 tools 字段");
+        assertFalse(body.has("thinking"), "旧模型不应被附加新的协议选项");
+    }
+
+    @Test
+    void shouldKeepFlashToolConversationInNonThinkingMode() throws Exception {
+        enqueueJson(200, TOOL_CALL_RESPONSE);
+        enqueueJson(200, CONTENT_RESPONSE);
+        var flash = DeepSeekClient.singleAttempt("test-key", server.url("/chat/completions").toString(), "deepseek-flash");
+        var tools = List.of(new LLMClient.ToolDef("read_file", "读取文件", mapper.createObjectNode().put("type", "object")));
+        var first = flash.chat(List.of(Message.user("读 pom")), tools);
+        flash.chat(List.of(Message.user("读 pom"), Message.assistant(first.content(), first.toolCalls()),
+                Message.tool("call_abc", "<project/>")), tools);
+        for (int index = 0; index < 2; index++) {
+            JsonNode body = mapper.readTree(server.takeRequest().getBody().readUtf8());
+            assertEquals("deepseek-flash", body.path("model").asText());
+            assertEquals("disabled", body.path("thinking").path("type").asText());
+        }
+    }
+
+    @Test
+    void shouldNotResendABoundedRequestAfterServerDisconnect() {
+        server.enqueue(new MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST));
+        enqueueJson(200, CONTENT_RESPONSE);
+        var bounded = DeepSeekClient.singleAttempt("test-key", server.url("/chat/completions").toString(), "deepseek-flash");
+        assertThrows(IOException.class, () -> bounded.chat(List.of(Message.user("检查")), List.of()));
+        assertEquals(1, server.getRequestCount(), "一次额度预留不得触发第二次 HTTP 请求");
     }
 
     @Test

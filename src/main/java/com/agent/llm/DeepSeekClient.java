@@ -148,6 +148,10 @@ public class DeepSeekClient implements LLMClient {
         ObjectNode requestBody = mapper.createObjectNode();
         requestBody.put("model", model);
         requestBody.put("stream", false);
+        // Flash 默认开启思考，但当前消息协议不保存 reasoning_content；显式关闭才能安全续接工具结果。
+        if ("deepseek-flash".equals(model)) {
+            requestBody.putObject("thinking").put("type", "disabled");
+        }
 
         ArrayNode messagesArray = requestBody.putArray("messages");
         if (messages != null) {

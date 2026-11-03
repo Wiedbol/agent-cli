@@ -119,14 +119,11 @@ public class Main {
             return;
         }
 
-        DeepSeekClient model;
-        try {
-            boolean skillMode = options.knowledgeMode() == KnowledgeMode.SKILL || options.resumeTask() != null
-                    && new com.agent.task.TaskStore(root).read(options.resumeTask()).knowledgeMode == KnowledgeMode.SKILL;
-            model = skillMode ? DeepSeekClient.singleAttempt(apiKey, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel()) : new DeepSeekClient(apiKey);
-        } catch (IOException failed) {
-            System.err.println("模型任务配置失败: " + failed.getMessage()); System.exit(4); return;
-        }
+        // 来源任务和经验提炼同样按请求计费，不能在一次预留下由 HTTP 层隐式重发。
+        boolean managedWork = options.task() != null || options.resumeTask() != null || options.extractExperience() != null;
+        DeepSeekClient model = managedWork
+                ? DeepSeekClient.singleAttempt(apiKey, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel())
+                : new DeepSeekClient(apiKey);
         CodingAgentCli cli = new CodingAgentCli(root,
                 model,
                 options.autoApprove(),
