@@ -22,6 +22,8 @@
 
 课程展示与复核可使用[演示交付包](demo/README.md)，含九分钟脚本、真实终端录制备份、课程报告和离线打包检查；[真实对照结果](examples/repair-lab/results/2026-10-23/README.md)单独说明已观察结果与局限。
 
+修复技能的完整本机 HTTP/JAR 复核、实际终端审核、阶段清单和真实调用前预算模板见[修复技能离线交付指引](demo/repair-skills/README.md)。该流程标记为 SIMULATED，不自动启动真实模型实验。
+
 | 组件 | 要求 |
 |---|---|
 | Java | JDK 17 或更高版本 |

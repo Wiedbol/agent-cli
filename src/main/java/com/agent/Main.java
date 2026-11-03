@@ -391,7 +391,7 @@ public class Main {
                   --task 目标                新建管理任务，独立验收后判断完成
                   --knowledge-mode 模式      仅新任务：none | experience | skill，默认 experience
                     none: 不使用历史知识；experience: 使用合格经验
-                    skill: 技能模式，当前不加载技能，继续独立修复
+                    skill: 失败后发现已批准技能，按需加载并固定实际读取版本
                   --no-experiences           none 的兼容别名，不能与 --knowledge-mode 混用
                   --resume-task 任务ID       显式恢复，沿用已保存知识模式与累计预算
                   --tasks / --task-status ID 无模型查询任务及知识模式
@@ -417,6 +417,10 @@ public class Main {
                   --revise-from-feedback F1,F2 --skill-batch B --revise-skill V --revision-reason TEXT [--feedback-source S --feedback-catalog C] 显式有界修订
                   --regression-trials T1,T2 审核/批准修订时绑定必要旧开发回归
                   --task TEXT --knowledge-mode skill [--skill-control A --skill-source S] 使用已批准技能；恢复不覆盖技能库
+                冻结版本对照使用独立入口（配置、模式和额度须事先审阅）：
+                  java -cp agent-cli.jar com.agent.evaluation.SkillEvaluationMain
+                    --simulate ROOT CONFIG 本机HTTP模拟；--real ROOT CONFIG 仅另行批准后真实运行
+                    --report ARCHIVE 无 Key 只读检查对照报告
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务
                 不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""");

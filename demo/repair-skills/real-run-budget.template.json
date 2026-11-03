@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "kind": "REAL_REQUEST_BUDGET_REVIEW_TEMPLATE_NOT_EXECUTABLE",
+  "approved": false,
+  "approvalReference": null,
+  "project": {"workspace": null, "control": null, "sourceArchive": null},
+  "model": {"name": null, "endpoint": null, "sampling": "provider-default", "httpReadTimeoutSeconds": 120},
+  "knowledgeReview": {
+    "v1": {"versionId": null, "versionDigestFromCli": null, "candidateDigestFromCli": null, "sourcesAndTrialsInspected": false},
+    "v2": {"versionId": null, "versionDigestFromCli": null, "candidateDigestFromCli": null, "parentV1Checked": false, "feedbackIds": [], "regressionsInspected": false},
+    "justifiedPassingRevisionExists": false
+  },
+  "inputReview": {
+    "catalogPath": null,
+    "catalogFileSha256": null,
+    "formalInputsPath": null,
+    "formalInputsFileSha256": null,
+    "formalCases": ["formal-bulk", "formal-remaining", "formal-grammar"],
+    "twoVersionsHaveIdenticalInitialInputsPerCase": false,
+    "formalAnswersAndResultsExcludedFromGenerationAndRevision": false,
+    "visibleInputsAndAllowedKnowledgeInspected": false
+  },
+  "phases": [
+    {"phase": "source-preparation", "tasks": [], "taskRequestLimit": null, "totalRequestLimit": null, "approved": false},
+    {"phase": "experience-extraction", "tasks": [], "totalRequestLimit": null, "approved": false},
+    {"phase": "v1-generation", "skillBatchId": null, "batchRequestLimit": null, "approved": false},
+    {"phase": "v1-development-trials", "cases": ["dev-points", "dev-whitespace"], "skillBatchId": null, "taskRequestLimit": null, "batchRequestLimit": null, "approved": false},
+    {"phase": "feedback-development", "cases": ["feedback-product"], "taskRequestLimit": null, "totalRequestLimit": null, "approved": false},
+    {"phase": "v2-feedback-revision", "selectedFeedbackIds": [], "skillBatchId": null, "batchRequestLimit": null, "approved": false},
+    {"phase": "v2-development-and-regression", "cases": ["feedback-product", "dev-whitespace", "dev-points"], "skillBatchId": null, "taskRequestLimit": null, "batchRequestLimit": null, "approved": false},
+    {"phase": "formal-comparison", "cells": 6, "repeats": 1, "taskRequestLimit": null, "batchRequestLimit": null, "approved": false}
+  ],
+  "costReview": {
+    "sharedBatchIdsCountedOnce": false,
+    "failedAndUnknownReservationsCountAgainstLimits": true,
+    "estimatedInputTokens": null,
+    "estimatedOutputTokens": null,
+    "estimatedMoney": null,
+    "currency": null,
+    "actualUnknownUsageMustRemainUnknown": true
+  },
+  "executionPolicy": {
+    "automaticRetryOrBudgetIncrease": false,
+    "automaticWholeBatchResume": false,
+    "useFormalResultsToReviseOrSelectCurrentV2": false,
+    "forceV2WhenNoJustifiedRevisionExists": false,
+    "additionalRepeatsRequireSeparateApproval": true
+  },
+  "reviewNotes": []
+}
