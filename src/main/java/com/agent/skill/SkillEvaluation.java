@@ -145,9 +145,15 @@ public final class SkillEvaluation {
         if (config.v1().equals(config.v2()) || first.candidate().parent() != null || parent == null || second.candidate().feedback() == null
                 || !first.version().skillId().equals(second.version().skillId()) || !config.v1().equals(parent.versionId())
                 || !SkillStore.digest(first.version()).equals(parent.sha256())
-                || second.candidate().feedback().items().stream().noneMatch(item -> "USE".equals(item.entry().kind())
-                        && item.entry().version() != null && config.v1().equals(item.entry().version().versionId()))) {
-            throw new IOException("需要同一技能的初始批准 v1 和基于其开发使用反馈审核修订的 v2");
+                || second.candidate().feedback().items().stream().noneMatch(item -> {
+                    var entry = item.entry();
+                    // 独立确认的新经验可支持修订，但不能伪装成已使用父版本或复用原来源。
+                    return "USE".equals(entry.kind()) && entry.version() != null && config.v1().equals(entry.version().versionId())
+                            || "SOURCE".equals(entry.kind()) && entry.experience() != null
+                            && entry.experience().confirmedAt() > first.version().approvedAt()
+                            && first.candidate().sources().stream().noneMatch(sourceItem -> sourceItem.experience().sourceTask().equals(entry.taskId()));
+                })) {
+            throw new IOException("需要同一技能的初始批准 v1 和基于其使用反馈或后续独立确认经验审核修订的 v2");
         }
         var catalogValue = SkillTrials.read(catalog);
         var expected = Set.of("formal-bulk", "formal-remaining", "formal-grammar");
@@ -312,6 +318,14 @@ public final class SkillEvaluation {
             for (var citation : snapshot.candidate().sources()) {
                 sourceTasks.add(citation.experience().sourceTask());
                 if (experiences.add(citation.experience().id())) { costs.add(new Cost("extraction-unrecorded", citation.experience().id(), null, 0, 0, 1)); }
+            }
+            if (snapshot.candidate().feedback() != null) {
+                for (var input : snapshot.candidate().feedback().items()) {
+                    var experience = input.entry().experience();
+                    if (experience != null && experiences.add(experience.id())) {
+                        costs.add(new Cost("extraction-unrecorded", experience.id(), null, 0, 0, 1));
+                    }
+                }
             }
         }
         var roots = new ArrayList<Path>(); roots.add(root);

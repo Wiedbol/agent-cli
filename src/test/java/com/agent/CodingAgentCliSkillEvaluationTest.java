@@ -16,18 +16,40 @@ class CodingAgentCliSkillEvaluationTest extends SkillPublicationFixture {
     Path formalCatalog, inputs, archive;
 
     void approvedPair() throws Exception {
+        approvedPair(false, false);
+    }
+    void approvedPair(boolean sourceFeedback, boolean reuseOriginalSource) throws Exception {
         v1 = publish(preparePair());
         skill = json.readTree(sourceArchive.resolve(".agent/skills/versions/" + v1 + ".json").toFile()).path("value").path("skillId").asText();
-        nextCase(false); output.reset();
-        var use = new FakeLLMClient(List.of(calls(call("load", "load_skill", Map.of("id", skill, "version", v1))),
-                calls(call("fix", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))), new LLMResponse("请验收", null, 1, 1)));
-        assertEquals(0, cli(use, "").startSkillTask("业务边界失败", null, control, sourceArchive, false), text());
-        String task = id("任务"); output.reset();
-        assertEquals(0, cli(null, "").listSkillFeedback(null, null), text()); String feedback = id("技能反馈");
-        nextCase(false);
+        String feedback;
         Path feedbackRoot;
-        try (var history = Files.list(control.resolve("history"))) {
-            feedbackRoot = history.map(p -> p.resolve("workspace")).filter(p -> Files.exists(p.resolve(".agent/tasks/" + task + "/state.json"))).findFirst().orElseThrow();
+        if (reuseOriginalSource) {
+            output.reset(); assertEquals(0, cli(null, "").listSkillFeedback(control, sourceArchive), text());
+            feedback = id("技能反馈"); feedbackRoot = sourceArchive;
+            nextCase(false);
+        } else {
+            nextCase(false); output.reset();
+            var responses = new ArrayList<LLMResponse>();
+            if (!sourceFeedback) { responses.add(calls(call("load", "load_skill", Map.of("id", skill, "version", v1)))); }
+            responses.add(calls(call("fix", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))));
+            responses.add(new LLMResponse("请验收", null, 1, 1));
+            var use = new FakeLLMClient(responses);
+            assertEquals(0, cli(use, "").startSkillTask("业务边界失败", null, control, sourceArchive, false), text());
+            String task = id("任务"); output.reset();
+            if (sourceFeedback) {
+                var advice = new FakeLLMClient(List.of(new LLMResponse("""
+                        {"conditions":"业务边界","errorFeatures":"checks expected fixed","recommendation":"独立检查计算逻辑","limitations":"不代表v1的使用效果"}
+                        """, null, 1, 1)));
+                assertEquals(0, cli(advice, "save " + task + "\n").extractExperience(task, true), text());
+                output.reset();
+            }
+            assertEquals(0, cli(null, "").listSkillFeedback(null, null), text());
+            var selected = java.util.regex.Pattern.compile("技能反馈: ([0-9a-f-]{36})\\R类别: " + (sourceFeedback ? "待提炼" : "待审查")).matcher(text());
+            assertTrue(selected.find(), text()); feedback = selected.group(1);
+            nextCase(false);
+            try (var history = Files.list(control.resolve("history"))) {
+                feedbackRoot = history.map(p -> p.resolve("workspace")).filter(p -> Files.exists(p.resolve(".agent/tasks/" + task + "/state.json"))).findFirst().orElseThrow();
+            }
         }
         output.reset(); assertEquals(0, cli(null, "").startSkillBatch(control, sourceArchive, 7), text()); batch = id("技能批次");
         var revision = new FakeLLMClient(List.of(new LLMResponse(GUIDE.replace("SKILL_GUIDE_PRIVATE_MARKER", "REVISION_PRIVATE_MARKER"), null, 5, 8)));
@@ -63,6 +85,30 @@ class CodingAgentCliSkillEvaluationTest extends SkillPublicationFixture {
                 calls(call("declare", "declare_skill", Map.of("id", skill, "version", published, "decision", counter ? "REJECT" : "ACCEPT", "reason", counter ? "解析原因，保留零守卫" : "业务边界适用")),
                         call("fix", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))),
                 new LLMResponse("请独立验收", null, 7, 11)));
+    }
+    @Test void shouldEvaluateConfirmedIndependentSourceWithoutClaimingParentUseAndCountBothExtractions() throws Exception {
+        approvedPair(true, false);
+        assertEquals(0, cli(null, "").startSkillEvaluation(evaluation(3, 18), run -> {
+            try { return repair(run.version().equals("v1") ? v1 : v2, run.scenario().equals("formal-grammar")); }
+            catch (Exception failure) { throw new java.io.IOException(failure); }
+        }), text());
+        var report = SkillEvaluation.read(archive);
+        assertEquals(6, report.cells.stream().filter(cell -> cell.state.equals("Verified")).count());
+        var feedback = report.frozen.versions().get("v2").candidate().feedback().items();
+        assertEquals(1, feedback.size()); assertEquals("SOURCE", feedback.get(0).entry().kind());
+        assertNull(feedback.get(0).entry().version(), "SOURCE must not invent a v1 load");
+        assertEquals(2, report.preparation.stream().filter(cost -> cost.phase().equals("extraction-unrecorded")).count());
+        assertEquals(2, report.wholeProcessCost.unknownRecords());
+        assertNull(report.wholeProcessCost.totalTokens());
+    }
+    @Test void shouldRefuseOriginalSourceAsLaterDevelopmentFeedbackBeforeCreatingModels() throws Exception {
+        approvedPair(true, true);
+        var before = WorkspaceSnapshot.capture(root);
+        assertEquals(4, cli(null, "").startSkillEvaluation(evaluation(3, 18), run -> {
+            fail("reusing original source must fail before creating models"); return null;
+        }));
+        assertEquals(before, WorkspaceSnapshot.capture(root));
+        assertFalse(Files.exists(archive));
     }
     @Test void shouldRunSixIsolatedCellsThroughNormalLoadingAndFinalAudit() throws Exception {
         approvedPair();
