@@ -16,17 +16,23 @@ public final class ChatKnowledge {
 
     private ChatKnowledge() { }
 
-    public record Reference(String id, String advice) { }
+    public record Reference(String id, String advice, boolean learned) {
+        Reference(String id, String advice) { this(id, advice, false); }
+    }
 
     public static Reference experience(Path root, PrintStream out, String reference) throws IOException {
         var library = new ExperienceLibrary(root);
         String key = normalize(reference);
+        var learned = new ChatLearning(root).local(key);
         ExperienceLibrary.Visible visible;
         if (isFullId(key)) {
+            if (!learned.isEmpty()) { return learnedExperience(root, learned.get(0)); }
             visible = library.readVisible(key);
         } else {
             var available = library.visible(out);
-            String id = resolvePrefix(key, available.stream().map(entry -> entry.experience().id()));
+            String id = resolvePrefix(key, Stream.concat(available.stream().map(entry -> entry.experience().id()),
+                    learned.stream().map(ChatLearning.Entry::id)));
+            for (var entry : learned) { if (id.equals(entry.id())) { return learnedExperience(root, entry); } }
             visible = available.stream().filter(entry -> entry.experience().id().equals(id)).findFirst().orElseThrow();
         }
         var experience = visible.experience();
@@ -36,8 +42,17 @@ public final class ChatKnowledge {
         }
         var advice = experience.advice();
         requireConditions(root, advice.conditions());
-        return new Reference(id, "失败经验 " + id + "\n适用条件: " + advice.conditions() + "\n错误特征: " + advice.errorFeatures()
-                + "\n处理建议: " + advice.recommendation() + "\n不适用情形: " + advice.limitations());
+        return new Reference(id, "失败经验 " + id + "\n" + ChatLearning.formatAdvice(advice));
+    }
+
+    private static Reference learnedExperience(Path root, ChatLearning.Entry entry) throws IOException {
+        requireConditions(root, entry.experience().conditions());
+        return new Reference(entry.id(), "普通聊天经验（用户确认）\n" + ChatLearning.formatAdvice(entry.experience()), true);
+    }
+
+    private static Reference learnedSkill(Path root, ChatLearning.Entry entry) throws IOException {
+        requireConditions(root, entry.skill().conditions());
+        return new Reference(entry.id(), "普通聊天技能（用户确认）\n" + entry.skill().markdown(), true);
     }
 
     public static Reference skill(Path root, Path control, Path source, PrintStream out, String reference) throws IOException {
@@ -47,12 +62,19 @@ public final class ChatKnowledge {
         String key = normalize(reference);
         SkillStore.Snapshot snapshot;
         if (isFullId(key)) {
-            snapshot = store.exists("versions", key) ? store.snapshot(key) : shared.resolve(key, out).snapshot();
+            if (store.exists("versions", key)) { snapshot = store.snapshot(key); }
+            else {
+                var learned = new ChatLearning(root).skills(key);
+                if (!learned.isEmpty()) { return learnedSkill(root, learned.get(0)); }
+                snapshot = shared.resolve(key, out).snapshot();
+            }
         } else {
             var local = store.ids("versions");
             var available = shared.available(out, key);
-            String id = resolvePrefix(key, Stream.concat(local.stream(),
-                    available.stream().map(entry -> entry.entry().versionId())));
+            var learned = new ChatLearning(root).skills(key);
+            String id = resolvePrefix(key, Stream.concat(Stream.concat(local.stream(),
+                    available.stream().map(entry -> entry.entry().versionId())), learned.stream().map(ChatLearning.Entry::id)));
+            for (var entry : learned) { if (id.equals(entry.id())) { return learnedSkill(root, entry); } }
             snapshot = local.contains(id) ? store.snapshot(id) : available.stream()
                     .filter(entry -> entry.entry().versionId().equals(id)).findFirst().orElseThrow().snapshot();
         }

@@ -320,6 +320,20 @@ public final class SkillReviews {
     }
     public void setShared(Path control, Path source, String id, boolean share) throws IOException {
         var shared = new SharedSkills();
+        var learning = new ChatLearning(root);
+        String key = ChatKnowledge.normalize(id);
+        var learned = share ? learning.local(key) : learning.skills(key);
+        if (!learned.isEmpty()) {
+            String selected = ChatKnowledge.resolvePrefix(key, learned.stream().map(ChatLearning.Entry::id));
+            if (share) {
+                var entry = learned.stream().filter(item -> selected.equals(item.id())).findFirst().orElseThrow();
+                shared.shareLearned(entry, root);
+                out.println("已共享普通聊天技能: " + selected);
+            } else {
+                out.println((shared.unshare(selected, root) ? "已取消共享技能: " : "技能未共享: ") + selected);
+            }
+            return;
+        }
         if (share) {
             shared.share(id, SharedSkills.Origin.of(root, control, source), out);
             out.println("已共享技能版本: " + id);
@@ -350,15 +364,27 @@ public final class SkillReviews {
             }
         }
         List<SharedSkills.Available> shared = List.of();
+        List<ChatLearning.Entry> learned = List.of();
+        ChatLearning learning = includeShared ? new ChatLearning(root) : null;
         if (includeShared && selected == null) {
             try { shared = new SharedSkills().available(out); }
             catch (IOException invalid) { out.println("共享技能索引不可用，继续显示本地版本"); }
+            try { learned = learning.skills(""); }
+            catch (IOException invalid) { learned = learning.local(""); }
         }
         if (selected != null && versions.stream().noneMatch(version -> selected.equals(version.id()))) {
             if (!includeShared) { throw new IOException("技能版本不存在或未完成发布"); }
+            String key = ChatKnowledge.normalize(selected);
+            var matches = learning.skills(key);
+            if (!matches.isEmpty()) {
+                String id = ChatKnowledge.resolvePrefix(key, matches.stream().map(ChatLearning.Entry::id));
+                var entry = matches.stream().filter(item -> id.equals(item.id())).findFirst().orElseThrow();
+                learning.printSkill(new ConsoleList(out, false), entry);
+                return;
+            }
             shared = List.of(new SharedSkills().resolve(selected, out));
         }
-        if (versions.isEmpty() && shared.isEmpty() && !unavailable) { out.println("暂无已发布技能版本。"); }
+        if (versions.isEmpty() && shared.isEmpty() && learned.isEmpty() && !unavailable) { out.println("暂无已发布技能版本。"); }
         var output = new ConsoleList(out, selected == null);
         for (var version : versions) {
             if (selected != null && !selected.equals(version.id())) { continue; }
@@ -373,6 +399,7 @@ public final class SkillReviews {
             printVersion(output, available.store(), version, available.snapshot().candidate(),
                     "共享来源: " + available.entry().origin().project().replace('\\', '/'));
         }
+        for (var entry : learned) { learning.printSkill(output, entry); }
         if (selected == null && unavailable) { throw new IOException("部分版本不可用，已显示其他有效版本"); }
     }
 

@@ -90,6 +90,8 @@ class GuardRoleTest {
                 review(writeFile, "{\"path\":\".git/config\",\"content\":\"x\"}").outcome());
         assertEquals(GuardRole.Outcome.DENY,
                 review(writeFile, "{\"path\":\"certs/server.key\",\"content\":\"x\"}").outcome());
+        assertEquals(GuardRole.Outcome.DENY,
+                review(writeFile, "{\"path\":\".agent/skills/chat-learning/record.json\",\"content\":\"x\"}").outcome());
     }
 
     @Test

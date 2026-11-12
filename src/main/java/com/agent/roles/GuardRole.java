@@ -96,7 +96,7 @@ public class GuardRole {
             "iwr | iex", "invoke-expression", "set-executionpolicy unrestricted");
 
     /** 项目内也不允许写入的路径前缀（相对根目录，使用 {@code /} 分隔）。 */
-    private static final List<String> PROTECTED_PREFIXES = List.of(".git/", ".env");
+    private static final List<String> PROTECTED_PREFIXES = List.of(".git/", ".env", ".agent/skills/chat-learning/");
 
     /** 项目内也不允许写入的密钥类后缀。 */
     private static final List<String> PROTECTED_SUFFIXES = List.of(".key", ".pem", ".pfx", ".p12", ".keystore");

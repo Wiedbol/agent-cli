@@ -14,6 +14,7 @@ import com.agent.session.SessionExporter;
 import com.agent.session.SessionPaths;
 import com.agent.session.SessionRecorder;
 import com.agent.session.SessionStore;
+import com.agent.skill.ChatLearning;
 import com.agent.task.TaskRecord;
 import com.agent.task.TaskStore;
 import com.agent.task.TaskAcceptance;
@@ -184,7 +185,11 @@ public class CodingAgentCli {
         out.println("AI Coding Agent 已就绪：root=" + root
                 + "，可用工具=" + String.join(", ", registrar.names()));
         if (session != null) {
-            out.println(session.describe() + "，共恢复 " + (llm.history().size() - 1) + " 条历史消息");
+            List<Message> history = llm.history();
+            out.println(session.describe() + "，共恢复 " + (history.size() - 1) + " 条历史消息");
+            if (session.resumed() && !session.sessionId().startsWith("task-")) {
+                showLastChatTurn(history);
+            }
         } else {
             out.println("本次运行不记录会话。");
         }
@@ -235,6 +240,7 @@ public class CodingAgentCli {
                     chatApproval(argument);
                 }
                 case "/use-experience", "/use-skill" -> useChatKnowledge(name, argument, skillControl, skillSource, interactive);
+                case "/learn" -> learnFromChat(argument, interactive, taskClient);
                 case "/make-skill" -> makeSkill(argument, skillControl, skillSource, taskClient);
                 case "/trace" -> {
                     if (!argument.isEmpty()) { out.println("用法: /trace"); }
@@ -255,8 +261,8 @@ public class CodingAgentCli {
                 case "/extract-experience" -> {
                     String sourceTaskId = argument.isBlank() ? currentTaskId : argument;
                     if (sourceTaskId == null) {
-                        out.println("本次聊天暂无当前任务。提炼经验需要管理任务，请在 Maven 项目中用 /task、/skill 或 /resume-task，"
-                                + "或输入 /extract-experience <任务ID>。");
+                        out.println("本次聊天暂无当前任务。提炼管理任务的经验，请在 Maven 项目中用 /task、/skill 或 /resume-task，"
+                                + "或输入 /extract-experience <任务ID>。普通聊天可用 /learn <验证说明>。");
                     } else if (sourceTaskId.chars().anyMatch(Character::isWhitespace)) {
                         out.println("用法: /extract-experience [任务ID]");
                     } else {
@@ -358,6 +364,28 @@ public class CodingAgentCli {
         user.say("Agent > " + answer);
     }
 
+    /** 预览只读已恢复的消息，避免将回显写回会话。 */
+    private void showLastChatTurn(List<Message> history) {
+        String answer = null;
+        for (int index = history.size() - 1; index >= 0; index--) {
+            Message message = history.get(index);
+            String content = message.content();
+            if (Message.ROLE_USER.equals(message.role())) {
+                if (content != null && !content.isBlank()) {
+                    out.println("最近一轮对话");
+                    user.say("用户 > " + content);
+                    if (answer != null) { printAnswer(answer); }
+                }
+                return;
+            }
+            if (answer == null && Message.ROLE_ASSISTANT.equals(message.role())
+                    && (message.toolCalls() == null || message.toolCalls().isEmpty())
+                    && content != null && !content.isBlank()) {
+                answer = content;
+            }
+        }
+    }
+
     private void printExecutionError(String message) {
         chatTrace.clearStatus();
         err.println(message);
@@ -411,10 +439,26 @@ public class CodingAgentCli {
             var reference = skill ? com.agent.skill.ChatKnowledge.skill(root, control, source, out, parts[0])
                     : com.agent.skill.ChatKnowledge.experience(root, out, parts[0]);
             if (!interactive) { out.println(); }
-            out.println("本轮参考" + (skill ? "技能版本: " : "经验: ") + reference.id());
+            String label = reference.learned() ? (skill ? "普通聊天技能（用户确认）: " : "普通聊天经验（用户确认）: ")
+                    : (skill ? "技能版本: " : "经验: ");
+            out.println("本轮参考" + label + reference.id());
             runChatRequest(interactive, () -> printAnswer(controller.runTaskWithAdvice(parts[1], reference.advice())));
         } catch (IOException invalid) {
             printExecutionError("本轮参考知识不可用: " + invalid.getMessage());
+        }
+    }
+
+    private void learnFromChat(String result, boolean interactive, LLMClient model) {
+        if (result.isBlank()) { out.println("用法: /learn <验证说明>"); return; }
+        if (!interactive) { out.println("请在交互终端中使用 /learn，以便核对并确认保存。"); return; }
+        if (session != null && session.sessionId().startsWith("task-")) {
+            out.println("请在普通聊天中用 /learn，管理任务可用 /extract-experience <任务ID>。");
+            return;
+        }
+        try {
+            new ChatLearning(root).learn(session == null ? null : session.sessionId(), llm.history(), result, model, in, out);
+        } catch (IOException failed) {
+            printExecutionError("普通聊天提炼失败: " + failed.getMessage());
         }
     }
 
@@ -437,7 +481,8 @@ public class CodingAgentCli {
                   /help                         查看此列表
                   /approval [files|project|manual] 查看模式，切换文件、可信项目或人工审批
                   /use-experience <经验ID> <需求> 用指定经验处理本轮聊天，ID 可用唯一前缀
-                  /use-skill <版本ID> <需求>       用指定已发布技能处理本轮聊天，ID 可用唯一前缀
+                  /use-skill <ID> <需求>           用指定技能处理本轮聊天，ID 可用唯一前缀
+                  /learn <验证说明>               从普通聊天一次生成经验和技能，核对后保存
                   /make-skill <经验ID[,经验ID…]> 从已确认经验生成待审核候选，最多 1 次模型请求
                   /trace                        展开最近一次执行过程
                   /task [--chat] <需求>          无 pom.xml 或指定 --chat 时走普通聊天，否则走 Maven 管理修复
@@ -450,7 +495,7 @@ public class CodingAgentCli {
                   /reagree-acceptance <任务ID> <验收命令> 重新约定验收
                   /retry-operation <任务ID> <操作ID> 处置结果不明的操作
                   /abandon-task <任务ID>         确认放弃任务
-                  /skills                       查看本项目及共享的已发布技能版本
+                  /skills                       查看本项目及共享的技能，包括用户确认的普通聊天技能
                   /skill-info <版本ID>           查看指定版本的技能指南和批准记录
                   /share-skill <版本ID>          共享本项目的一项技能版本
                   /unshare-skill <版本ID>        在原项目取消共享技能版本
@@ -511,6 +556,7 @@ public class CodingAgentCli {
             chatTrace.reset();
             if (history.skippedLines() > 0) { err.println("[会话记录] 已跳过 " + history.skippedLines() + " 行损坏记录"); }
             out.println("已切换到会话 " + session.sessionId() + "，恢复 " + history.messages().size() + " 条消息。");
+            showLastChatTurn(history.messages());
         } catch (IOException failed) {
             err.println("会话切换失败: " + failed.getMessage());
         }
@@ -726,14 +772,23 @@ public class CodingAgentCli {
         try {
             var library = new com.agent.experience.ExperienceLibrary(root);
             var experiences = library.visible(out);
-            if (experiences.isEmpty()) { out.println("暂无经验。"); }
+            var learned = new ChatLearning(root).local("");
+            if (experiences.isEmpty() && learned.isEmpty()) { out.println("暂无经验。"); }
             library.printList(experiences, out);
+            var list = new ConsoleList(out, true);
+            for (var entry : learned) { ChatLearning.printExperience(list, entry); }
             return 0;
         } catch (IOException failed) { err.println("经验查询失败: " + failed.getMessage()); return 4; }
     }
 
     public int showExperience(String id) {
         try {
+            var learned = new ChatLearning(root).local(id.toLowerCase(java.util.Locale.ROOT));
+            if (learned.size() > 1) { throw new IOException("ID 前缀匹配多个条目，请输入更多位"); }
+            if (!learned.isEmpty()) {
+                ChatLearning.printExperience(new ConsoleList(out, false), learned.get(0));
+                return 0;
+            }
             var library = new com.agent.experience.ExperienceLibrary(root);
             library.print(library.readVisible(id), out);
             return 0;

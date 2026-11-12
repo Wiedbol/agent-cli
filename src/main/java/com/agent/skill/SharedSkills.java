@@ -48,13 +48,23 @@ final class SharedSkills {
         }
     }
 
-    record Entry(String versionId, String versionSha256, Origin origin) { }
+    record Entry(String versionId, String versionSha256, Origin origin,
+                 @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_DEFAULT)
+                 boolean learned) { }
     record Available(Entry entry, SkillStore store, SkillStore.Snapshot snapshot) { }
 
     void share(String id, Origin origin, PrintStream out) throws IOException {
-        Path target = path(id);
         var snapshot = origin.open(out).snapshot(id);
-        var entry = new Entry(id, SkillStore.digest(snapshot.version()), origin);
+        share(new Entry(id, SkillStore.digest(snapshot.version()), origin, false));
+    }
+
+    void shareLearned(ChatLearning.Entry learned, Path root) throws IOException {
+        share(new Entry(learned.id(), SkillStore.digest(learned), Origin.of(root, null, null), true));
+    }
+
+    private void share(Entry entry) throws IOException {
+        String id = entry.versionId();
+        Path target = path(id);
         Files.createDirectories(directory);
         checkPath(target);
         Path temporary = Files.createTempFile(directory, "share-", ".tmp");
@@ -93,6 +103,7 @@ final class SharedSkills {
     }
 
     private Available resolve(Entry entry, PrintStream out) throws IOException {
+        if (entry.learned()) { throw new IOException("该技能来自普通聊天，请用 /use-skill 引用"); }
         var store = entry.origin().open(out);
         var snapshot = store.snapshot(entry.versionId());
         if (!entry.versionSha256().equals(SkillStore.digest(snapshot.version()))) {
@@ -106,15 +117,41 @@ final class SharedSkills {
     }
 
     List<Available> available(PrintStream out, String prefix) throws IOException {
+        var values = new ArrayList<Available>();
+        for (Entry entry : entries(prefix)) {
+            if (entry.learned()) { continue; }
+            try { values.add(resolve(entry, out)); }
+            catch (IOException unavailable) { /* 单条来源失效不影响其他技能。 */ }
+        }
+        return List.copyOf(values);
+    }
+
+    List<ChatLearning.Entry> learned(String prefix) throws IOException {
+        var values = new ArrayList<ChatLearning.Entry>();
+        for (Entry entry : entries(prefix)) {
+            if (!entry.learned()) { continue; }
+            try {
+                var learned = new ChatLearning(Path.of(entry.origin().project())).read(entry.versionId());
+                if (entry.versionSha256().equals(SkillStore.digest(learned))) { values.add(learned); }
+            } catch (IOException unavailable) { /* 只显示可回读且摘要一致的普通聊天技能。 */ }
+        }
+        return List.copyOf(values);
+    }
+
+    private List<Entry> entries(String prefix) throws IOException {
         checkPath(directory);
         if (Files.notExists(directory, NOFOLLOW_LINKS)) { return List.of(); }
+        if (ChatKnowledge.isFullId(prefix)) {
+            Path target = path(prefix);
+            return Files.exists(target, NOFOLLOW_LINKS) ? List.of(read(prefix)) : List.of();
+        }
         try (var files = Files.list(directory)) {
-            var entries = new ArrayList<Available>();
+            var entries = new ArrayList<Entry>();
             for (Path file : files.sorted().toList()) {
                 String name = file.getFileName().toString();
                 if (!name.endsWith(".json") || !name.startsWith(prefix)) { continue; }
-                try { entries.add(resolve(name.substring(0, name.length() - 5), out)); }
-                catch (IOException unavailable) { /* 一个失效引用不影响其他已发布技能。 */ }
+                try { entries.add(read(name.substring(0, name.length() - 5))); }
+                catch (IOException unavailable) { /* 单条索引无效不影响其他记录。 */ }
             }
             return List.copyOf(entries);
         }
@@ -131,6 +168,7 @@ final class SharedSkills {
             throw new IOException("共享技能索引无效: " + id);
         }
         value.origin().validate();
+        if (value.learned() && value.origin().control() != null) { throw new IOException("普通聊天技能必须引用来源项目"); }
         return value;
     }
 

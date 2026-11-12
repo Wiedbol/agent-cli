@@ -113,7 +113,7 @@ class CodingAgentCliSessionTest {
         assertEquals(2, text.lines().filter(line -> line.endsWith("用法: /task [--chat] <需求>")).count(), text);
         assertTrue(text.contains("用法: /help"), text);
         for (String command : List.of("/help", "/approval [files|project|manual]", "/trace", "/skill <修复目标>", "/tasks", "/status <任务ID>", "/resume-task <任务ID>",
-                "/use-experience <经验ID> <需求>", "/use-skill <版本ID> <需求>",
+                "/use-experience <经验ID> <需求>", "/use-skill <ID> <需求>", "/learn <验证说明>",
                 "/task-budget <任务ID> <新总上限>", "/skills", "/skill-info <版本ID>", "/extract-experience [任务ID]",
                 "/experiences", "/experience <经验ID>", "/task [--chat] <需求>", "/sessions", "/switch <会话ID>",
                 "/export [会话ID]", "/new", "/replan-task <任务ID>", "/reagree-acceptance <任务ID> <验收命令>",
@@ -262,6 +262,8 @@ class CodingAgentCliSessionTest {
         SessionStore original = SessionStore.start(dir, SessionStore.Mode.NEW, "original");
         original.appendMessage(Message.user("原聊天历史"));
         SessionStore other = SessionStore.start(dir, SessionStore.Mode.NEW, "review notes");
+        other.appendMessage(Message.user("目标旧问题"));
+        other.appendMessage(Message.assistant("目标旧回复"));
         other.appendMessage(Message.user("目标聊天历史"));
         SessionStore audit = SessionStore.startStrict(dir, "task-audit");
         audit.appendMessage(Message.user("任务审计消息"));
@@ -280,13 +282,16 @@ class CodingAgentCliSessionTest {
         assertTrue(lines.contains("\noriginal\n  状态: 当前\n\n"), text);
         assertTrue(lines.contains("\ntask-audit\n  类型: 任务记录\n"), text);
         assertTrue(text.contains("聊天切换需要普通会话") && text.contains("会话不存在或记录不可用: missing"), text);
-        assertTrue(text.contains("已切换到会话 review notes，恢复 1 条消息"), text);
+        assertTrue(text.contains("已切换到会话 review notes，恢复 3 条消息"), text);
+        assertTrue(lines.contains("最近一轮对话\n用户 > 目标聊天历史\n\n用户 > "), text);
+        assertFalse(text.contains("任务审计消息") || text.contains("目标旧回复"), text);
         assertTrue(text.contains("当前聊天暂无执行过程"), text);
-        assertEquals(List.of(List.of("原聊天历史", "原会话提问"), List.of("目标聊天历史", "切换后提问"), List.of("新会话提问")),
+        assertEquals(List.of(List.of("原聊天历史", "原会话提问"), List.of("目标旧问题", "目标聊天历史", "切换后提问"), List.of("新会话提问")),
                 fake.requests().stream().map(request -> request.stream().filter(message -> message.role().equals("user"))
                         .map(Message::content).toList()).toList());
         assertEquals(List.of("原聊天历史", "原会话提问", "回答一"), SessionStore.load(dir, "original").messages().stream().map(Message::content).toList());
-        assertEquals(List.of("目标聊天历史", "切换后提问", "回答二"), SessionStore.load(dir, "review notes").messages().stream().map(Message::content).toList());
+        assertEquals(List.of("目标旧问题", "目标旧回复", "目标聊天历史", "切换后提问", "回答二"),
+                SessionStore.load(dir, "review notes").messages().stream().map(Message::content).toList());
         assertEquals(List.of("新会话提问", "回答三"), original.loadMessages().messages().stream().map(Message::content).toList());
         assertArrayEquals(auditBefore, Files.readAllBytes(audit.currentFile()));
         try (var files = Files.list(dir)) {
@@ -306,8 +311,12 @@ class CodingAgentCliSessionTest {
     void shouldResumeLastSessionOnNextRun() throws Exception {
         Path dir = SessionPaths.defaultDir(root);
         SessionStore first = SessionStore.start(dir, SessionStore.Mode.NEW, "chat");
-        cli(first, new FakeLLMClient(List.of(new LLMResponse("第一轮回答", null, 1, 1))),
-                "第一个问题\nexit\n").runRepl();
+        first.appendMessage(Message.user("更早的问题"));
+        first.appendMessage(Message.assistant("更早的回复"));
+        first.appendMessage(Message.user("第一个问题"));
+        first.appendMessage(Message.assistant("工具调用中的文字", List.of(commandCall("old-call", "java -version"))));
+        first.appendMessage(Message.tool("old-call", "工具输出"));
+        first.appendMessage(Message.assistant("第一轮回答\n第二行"));
 
         SessionStore resumed = SessionStore.start(dir, SessionStore.Mode.AUTO, null);
         FakeLLMClient second = new FakeLLMClient(List.of(new LLMResponse("第二轮回答", null, 1, 1)));
@@ -315,12 +324,22 @@ class CodingAgentCliSessionTest {
         assertTrue(resumed.resumed());
         assertEquals("chat", resumed.sessionId());
 
-        cli(resumed, second, "第二个问题\nexit\n").runRepl();
+        var output = new ByteArrayOutputStream();
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var input = new BufferedReader(new StringReader("第二个问题\nexit\n"));
+        var repl = new CodingAgentCli(root, second, false, 4, input, stream, stream, resumed);
+        assertEquals(0, repl.runRepl());
+
+        String text = output.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
+        assertTrue(text.contains("最近一轮对话\n用户 > 第一个问题\nAgent > 第一轮回答\n第二行\n"), text);
+        assertFalse(text.contains("更早的") || text.contains("工具调用中的文字") || text.contains("工具输出"), text);
+        assertEquals(1, second.callCount());
+        assertEquals(8, resumed.loadMessages().messages().size());
 
         List<String> sentToModel = second.requests().get(0).stream()
                 .map(com.agent.llm.Message::content).toList();
         assertTrue(sentToModel.contains("第一个问题"), "恢复后模型应当看到上一轮的用户消息：" + sentToModel);
-        assertTrue(sentToModel.contains("第一轮回答"), "恢复后模型应当看到上一轮的助手回答：" + sentToModel);
+        assertTrue(sentToModel.contains("第一轮回答\n第二行"), "恢复后模型应当看到上一轮的助手回答：" + sentToModel);
     }
 
     @Test
