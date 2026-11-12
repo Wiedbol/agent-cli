@@ -94,6 +94,13 @@ class CodingAgentCliSkillEvaluationTest extends SkillPublicationFixture {
         }), text());
         var report = SkillEvaluation.read(archive);
         assertEquals(6, report.cells.stream().filter(cell -> cell.state.equals("Verified")).count());
+        for (var cell : report.cells) {
+            String selected = cell.run.version().equals("v1") ? v1 : v2;
+            String first = report.attempts.stream().filter(a -> a.order == cell.run.order()).findFirst()
+                    .orElseThrow().payload.messages().toString();
+            assertTrue(first.contains("load_skill 参数: {\"id\":\"" + skill + "\",\"version\":\"" + selected + "\"}"));
+            assertFalse(first.contains(skill + "@" + selected));
+        }
         var feedback = report.frozen.versions().get("v2").candidate().feedback().items();
         assertEquals(1, feedback.size()); assertEquals("SOURCE", feedback.get(0).entry().kind());
         assertNull(feedback.get(0).entry().version(), "SOURCE must not invent a v1 load");
@@ -200,7 +207,8 @@ class CodingAgentCliSkillEvaluationTest extends SkillPublicationFixture {
         assertEquals(6, retained.cells.size()); assertEquals(4, retained.attempts.size()); assertEquals(5, factories.get()); assertEquals(1, failures.get());
         assertEquals("ERROR", retained.cells.get(2).state); assertTrue(retained.cells.get(2).reason.contains("factory failure"));
         assertEquals("Paused", retained.cells.get(5).state); assertTrue(retained.cells.get(5).reason.contains("总额度"));
-        assertTrue(retained.cells.get(0).events.stream().anyMatch(e -> e.type().equals("NO_MATCH")));
+        assertTrue(retained.cells.get(0).events.stream().anyMatch(e -> e.type().equals("CATALOG")));
+        assertEquals(0, retained.cells.get(0).loads);
         assertTrue(retained.cells.get(3).events.stream().anyMatch(e -> e.type().equals("CATALOG"))); assertEquals(0, retained.cells.get(3).loads);
         assertEquals("FAILED", retained.attempts.get(1).status); assertNull(retained.attempts.get(1).promptTokens);
         assertEquals(4, retained.formalCost.requests()); assertNull(retained.formalCost.promptTokens()); assertNull(retained.wholeProcessCost.requests());

@@ -1,5 +1,7 @@
 package com.agent.task;
 
+import com.agent.roles.ControllerRole;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -95,7 +97,7 @@ public final class TaskRecord {
 
     /** 累计消耗随任务落盘，不随一次控制循环重新开始。 */
     public static final class Progress {
-        public int maxRequests = 12;
+        public int maxRequests = ControllerRole.DEFAULT_MAX_STEPS;
         public int requests;
         public int tools;
         public long promptTokens;

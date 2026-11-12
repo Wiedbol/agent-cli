@@ -1,5 +1,6 @@
 package com.agent.skill;
 
+import com.agent.ConsoleList;
 import com.agent.task.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.*;
@@ -317,8 +318,23 @@ public final class SkillReviews {
             return true;
         }
     }
+    public void setShared(Path control, Path source, String id, boolean share) throws IOException {
+        var shared = new SharedSkills();
+        if (share) {
+            shared.share(id, SharedSkills.Origin.of(root, control, source), out);
+            out.println("已共享技能版本: " + id);
+        } else {
+            out.println((shared.unshare(id, root) ? "已取消共享技能版本: " : "技能版本未共享: ") + id);
+        }
+    }
+
     public void versions(Path control, Path source, String selected) throws IOException {
-        var store = trials.library(control, source);
+        versions(control, source, selected, false);
+    }
+
+    public void versions(Path control, Path source, String selected, boolean includeShared) throws IOException {
+        if ((control == null) != (source == null)) { throw new IOException("技能库控制和来源路径必须成对指定"); }
+        var store = control == null ? new SkillStore(root) : trials.library(control, source);
         var versions = new ArrayList<SkillStore.Version>();
         boolean unavailable = false;
         for (String id : store.ids("versions")) {
@@ -333,22 +349,44 @@ public final class SkillReviews {
                 out.println("其他版本不可用: " + id + "；" + invalid.getMessage());
             }
         }
-        if (selected != null && versions.stream().noneMatch(v -> selected.equals(v.id()))) { throw new IOException("技能版本不存在或未完成发布"); }
-        if (versions.isEmpty() && !unavailable) { out.println("暂无已发布技能版本。"); }
+        List<SharedSkills.Available> shared = List.of();
+        if (includeShared && selected == null) {
+            try { shared = new SharedSkills().available(out); }
+            catch (IOException invalid) { out.println("共享技能索引不可用，继续显示本地版本"); }
+        }
+        if (selected != null && versions.stream().noneMatch(version -> selected.equals(version.id()))) {
+            if (!includeShared) { throw new IOException("技能版本不存在或未完成发布"); }
+            shared = List.of(new SharedSkills().resolve(selected, out));
+        }
+        if (versions.isEmpty() && shared.isEmpty() && !unavailable) { out.println("暂无已发布技能版本。"); }
+        var output = new ConsoleList(out, selected == null);
         for (var version : versions) {
             if (selected != null && !selected.equals(version.id())) { continue; }
             boolean latest = versions.stream().filter(v -> v.skillId().equals(version.skillId())).noneMatch(v -> v.approvedAt() > version.approvedAt());
             var availability = store.availability(version);
             String defaultState = latest && unavailable ? "未知（其他版本不可用，不自动回退默认）" : Boolean.toString(latest && availability.enabled());
-            out.println("技能版本: " + version.id() + "\n技能: " + version.skillId() + "\n默认: " + defaultState
-                    + "\n版本摘要: " + SkillStore.digest(version) + "\n可用性: " + (availability.enabled() ? "已启用" : "已停用")
-                    + "\n可用性历史: " + SkillStore.JSON.writeValueAsString(availability.changes())
-                    + "\n候选: " + version.candidateId() + "@" + version.candidateSha256() + "\n批准记录: "
-                    + SkillStore.JSON.writeValueAsString(store.read("reviews", version.reviewId(), Publication.class)));
-            var candidate = store.candidate(version.candidateId());
-            out.println("父版本: " + candidate.parent() + "\n修订原因: " + candidate.revisionReason() + "\n" + candidate.guide().markdown());
-            if (candidate.feedback() != null) { out.println("选定反馈快照: " + SkillStore.JSON.writeValueAsString(candidate.feedback())); }
+            printVersion(output, store, version, store.candidate(version.candidateId()), "默认: " + defaultState);
+        }
+        for (var available : shared) {
+            var version = available.snapshot().version();
+            if (versions.stream().anyMatch(local -> local.id().equals(version.id()))) { continue; }
+            printVersion(output, available.store(), version, available.snapshot().candidate(),
+                    "共享来源: " + available.entry().origin().project().replace('\\', '/'));
         }
         if (selected == null && unavailable) { throw new IOException("部分版本不可用，已显示其他有效版本"); }
+    }
+
+    private void printVersion(ConsoleList output, SkillStore store, SkillStore.Version version,
+                              SkillCandidate candidate, String scope) throws IOException {
+        var availability = store.availability(version);
+        output.heading("技能版本: " + version.id());
+        output.detail("技能: " + version.skillId() + "\n" + scope
+                + "\n短 ID: " + version.id().substring(0, 8)
+                + "\n版本摘要: " + SkillStore.digest(version) + "\n可用性: " + (availability.enabled() ? "已启用" : "已停用")
+                + "\n可用性历史: " + SkillStore.JSON.writeValueAsString(availability.changes())
+                + "\n候选: " + version.candidateId() + "@" + version.candidateSha256() + "\n批准记录: "
+                + SkillStore.JSON.writeValueAsString(store.read("reviews", version.reviewId(), Publication.class)));
+        output.detail("父版本: " + candidate.parent() + "\n修订原因: " + candidate.revisionReason() + "\n" + candidate.guide().markdown());
+        if (candidate.feedback() != null) { output.detail("选定反馈快照: " + SkillStore.JSON.writeValueAsString(candidate.feedback())); }
     }
 }

@@ -56,6 +56,13 @@ public class RegistrarRole {
     public static RegistrarRole standard(Path root, CommandRunner commandRunner,
                                          java.util.function.BiConsumer<Path, String> checkVersion,
                                          java.util.function.Predicate<Path> isVisible) {
+        return standard(root, commandRunner, checkVersion, isVisible, null);
+    }
+
+    /** 受控试用的工具说明必须与实际冻结命令一致。 */
+    public static RegistrarRole standard(Path root, CommandRunner commandRunner,
+                                         java.util.function.BiConsumer<Path, String> checkVersion,
+                                         java.util.function.Predicate<Path> isVisible, String frozenCommand) {
         IgnoreRules rules = ignoreRules(root);
         return new RegistrarRole()
                 .register(new ReadFileTool(isVisible))
@@ -63,7 +70,7 @@ public class RegistrarRole {
                 .register(new ReplaceTextTool(checkVersion))
                 .register(new ListFilesTool(rules, isVisible))
                 .register(new SearchCodeTool(rules, isVisible))
-                .register(new RunCommandTool(commandRunner));
+                .register(new RunCommandTool(commandRunner, frozenCommand));
     }
 
     private static IgnoreRules ignoreRules(Path root) {

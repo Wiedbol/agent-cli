@@ -72,6 +72,38 @@ class CodingAgentCliBoundedRepairTest {
 
     private LLMResponse done() { return new LLMResponse("请验收", null, 1, 1); }
 
+    private ToolCall read(String id, String path) {
+        return new ToolCall(id, new ToolCall.Function("read_file", "{\"path\":\"" + path + "\"}"));
+    }
+
+    @Test
+    void shouldAllowRepairAfterFirstSuccessfulSourceDiagnosis() throws Exception {
+        Files.createDirectories(root.resolve("src/test/java"));
+        Files.writeString(root.resolve("src/test/java/AppTest.java"), "class AppTest {}");
+        Files.writeString(root.resolve("GOAL.md"), "修复计算");
+        FakeLLMClient model = new FakeLLMClient(List.of(
+                new LLMResponse(null, List.of(new ToolCall("list", new ToolCall.Function("list_files", "{\"path\":\".\"}"))), 1, 1),
+                new LLMResponse(null, List.of(read("source", "src/main/java/App.java"), read("test", "src/test/java/AppTest.java")), 1, 1),
+                new LLMResponse(null, List.of(read("goal", "GOAL.md")), 1, 1),
+                edit("repair", "fixed"), done()));
+
+        assertEquals(0, cli(model, acceptance(), 8).startManagedTask("修复计算", null), text());
+        assertEquals(5, model.callCount());
+        assertEquals("fixed", Files.readString(root.resolve("src/main/java/App.java")));
+        assertTrue(text().contains("状态: Verified"), text());
+    }
+
+    @Test
+    void shouldStillPauseWhenModelKeepsReadingSourceWithoutRepairing() throws Exception {
+        FakeLLMClient model = new FakeLLMClient(java.util.stream.IntStream.range(0, 6)
+                .mapToObj(i -> new LLMResponse(null, List.of(read("read-" + i, "src/main/java/App.java")), 1, 1)).toList());
+
+        assertEquals(1, cli(model, acceptance(), 8).startManagedTask("修复计算", null), text());
+        assertEquals(4, model.callCount());
+        assertEquals("broken", Files.readString(root.resolve("src/main/java/App.java")));
+        assertTrue(text().contains("同一核心错误持续三个决策轮次"), text());
+    }
+
     @Test
     void shouldFeedFailedAcceptanceBackUntilCurrentTestsPass() throws Exception {
         FakeLLMClient model = new FakeLLMClient(List.of(edit("wrong-edit", "still broken"), done(),
@@ -228,8 +260,7 @@ class CodingAgentCliBoundedRepairTest {
         FakeLLMClient model = new FakeLLMClient(List.of(
                 new LLMResponse(null, List.of(new ToolCall("missing-1", new ToolCall.Function("read_file",
                         "{\"path\":\"missing.java\"}"))), 1, 1),
-                new LLMResponse(null, List.of(new ToolCall("unrelated", new ToolCall.Function("read_file",
-                        "{\"path\":\"pom.xml\"}"))), 1, 1),
+                new LLMResponse(null, List.of(read("unrelated", "src/main/java/App.java")), 1, 1),
                 new LLMResponse(null, List.of(new ToolCall("missing-2", new ToolCall.Function("read_file",
                         "{\"path\":\"missing.java\"}"))), 1, 1), done()));
         assertEquals(1, cli(model, passing, 12).startManagedTask("读取缺失文件", null));

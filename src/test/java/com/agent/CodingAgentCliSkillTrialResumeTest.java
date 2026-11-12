@@ -29,6 +29,7 @@ class CodingAgentCliSkillTrialResumeTest extends SkillTrialFixture {
         assertTrue(continued.requests().get(0).toString().contains("SKILL_GUIDE_PRIVATE_MARKER"));
         assertTrue(text().contains("状态: VERIFIED") && text().contains("任务: " + task), text());
         assertTrue(text().contains("试用请求: 2") && text().contains("累计请求: 2/3"), text());
+        assertTrue(text().contains("目录已组装=true；指南已组装=true"), text());
         assertTrue(text().contains("工具调用: 2"), text());
         assertEquals("dev-fixed", Files.readString(root.resolve(SOURCE)));
         try (var files = Files.walk(folder.resolve("resumptions"))) {

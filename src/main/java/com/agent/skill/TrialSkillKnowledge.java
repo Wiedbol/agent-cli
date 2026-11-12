@@ -9,6 +9,8 @@ import java.util.*;
 
 /** 显式开发审阅复用普通任务循环及加载工具；客户端包装仅审计，不修改请求消息。 */
 final class TrialSkillKnowledge implements SkillKnowledge {
+    private static final String DIRECTORY_HEADER = "\n修复技能试用目录（显式候选审阅；未启用候选，仅本次可加载）";
+    private static final String DIRECTORY_END = "若不适用，应明确拒绝，不得套用；继续独立修复并完成冻结验收。";
     private final SkillTrials trials;
     private final SkillTrial record;
     private final SkillStore source;
@@ -17,9 +19,10 @@ final class TrialSkillKnowledge implements SkillKnowledge {
     private String catalog = "";
     TrialSkillKnowledge(SkillTrials trials, SkillTrial record, SkillStore source) throws IOException {
         this.trials = trials; this.record = record; this.source = source; candidate = source.candidate(record.candidateId);
-        if (record.taskId != null) { catalog = directory(); }
+        if (record.taskId != null) { catalog = previousDirectory(); }
     }
     public String trialId() { return record.id; }
+    @Override public String frozenCommand() { return record.command; }
     public void bind(TaskRecord task) throws IOException {
         this.task = task; record.taskId = task.id; record.status = "RUNNING"; trials.save(record);
     }
@@ -47,12 +50,32 @@ final class TrialSkillKnowledge implements SkillKnowledge {
         return catalog;
     }
     private String directory() {
-        return "\n修复技能试用目录（显式候选审阅；未启用候选，仅本次可加载）: " + record.candidateId + "@" + record.candidateSha256
+        return DIRECTORY_HEADER
+                + "\nload_skill 参数: " + selectionArguments()
                 + "\n摘要: " + shortText(candidate.guide().title()) + "\n适用: " + shortText(candidate.guide().conditions())
                 + "\n不适用: " + shortText(candidate.guide().exclusions())
                 + "\n匹配原因: 操作者指定的开发候选；来源与项目已核验。"
-                + "\n审阅协议: 请先通过 load_skill 按上述 id/version 读取完整候选，再根据新任务目标和失败证据用 declare_skill 声明 ACCEPT 或 REJECT 并说明原因。"
-                + "若不适用，应明确拒绝，不得套用；继续独立修复并完成冻结验收。";
+                + "\n审阅协议: 请先用上述两个独立字段调用 load_skill，再用相同的 id 和 version 调用 declare_skill，"
+                + "根据新任务目标和失败证据声明 ACCEPT 或 REJECT 并说明原因。"
+                + DIRECTORY_END;
+    }
+    private String previousDirectory() {
+        // 恢复时用实际发送过的目录核对后续请求，兼容旧版 ID@摘要 的目录格式。
+        for (var request : record.requests) {
+            if (!request.catalogIncluded) { continue; }
+            for (var message : request.messages) {
+                String content = message.content();
+                if (!"user".equals(message.role()) || content == null) { continue; }
+                int start = content.indexOf(DIRECTORY_HEADER);
+                if (start < 0) { continue; }
+                int end = content.indexOf(DIRECTORY_END, start);
+                if (end >= 0) { return content.substring(start, end + DIRECTORY_END.length()); }
+            }
+        }
+        return directory();
+    }
+    private String selectionArguments() {
+        return "{\"id\":\"" + record.candidateId + "\",\"version\":\"" + record.candidateSha256 + "\"}";
     }
     private static String shortText(String text) { return text.length() <= 240 ? text : text.substring(0, 240) + "…"; }
     private void selection(ToolRequest request, int fields) {
@@ -64,7 +87,8 @@ final class TrialSkillKnowledge implements SkillKnowledge {
         if (catalog.isEmpty() || !record.candidateId.equals(request.requireString("id"))
                 || !record.candidateSha256.equals(request.requireString("version"))) {
             event("LOAD_DENIED", false, "选择与本次授权快照不符");
-            throw new SecurityException("本次目录不允许该候选或版本");
+            throw new SecurityException(catalog.isEmpty() ? "本次目录不允许该候选或版本"
+                    : "本次目录不允许该候选或版本。请分别填写 id 和 version，使用 " + selectionArguments());
         }
     }
     public String load(ToolRequest request) {
@@ -72,7 +96,8 @@ final class TrialSkillKnowledge implements SkillKnowledge {
         if (record.loaded) { event("LOAD_DUPLICATE", true, "不重复加入指南"); return "同一快照已加载，不重复加入上下文"; }
         record.loaded = true;
         event("LOAD", true, record.candidateId + "@" + record.candidateSha256);
-        return "修复技能试用快照 " + record.candidateId + "@" + record.candidateSha256 + "\n" + candidate.guide().markdown();
+        return "修复技能试用快照，declare_skill 使用以下 id 和 version：" + selectionArguments()
+                + "\n" + candidate.guide().markdown();
     }
     public String declare(ToolRequest request) {
         selection(request, 4);

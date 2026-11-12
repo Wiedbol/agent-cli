@@ -1,21 +1,29 @@
 package com.agent.roles;
 
+import com.agent.command.ProjectCommand;
+import com.agent.tool.RunCommandTool;
 import com.agent.tool.Tool;
+import com.agent.tool.ReplaceTextTool;
+import com.agent.tool.WriteFileTool;
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * 角色四：<b>守卫</b>。
  *
- * <p>守卫是「决定某个操作能不能做」的唯一裁决者，输出三种结论：
+ * <p>守卫决定工具能否执行及是否需要用户确认：
  *
  * <ul>
- *   <li>{@link Outcome#ALLOW}：放行（只读操作）；</li>
+ *   <li>{@link Outcome#ALLOW}：放行（只读操作或启用文件模式后的精确替换）；</li>
+ *   <li>{@link Outcome#CREATE_NEW}：只允许新建文件，执行时不得覆盖；</li>
  *   <li>{@link Outcome#CONFIRM}：放行但必须由<b>用户</b>确认（写文件、执行命令）；</li>
  *   <li>{@link Outcome#DENY}：直接拒绝（路径越界、受保护文件、高危命令）。</li>
  * </ul>
@@ -28,7 +36,7 @@ import java.util.regex.Pattern;
  *   <li><b>命令审查</b>：高危片段黑名单、上级目录引用、指向项目外的绝对路径。</li>
  * </ol>
  *
- * <p><b>诚实的边界说明</b>：命令审查是「黑名单 + 人工确认」，它能挡住常见误操作与明显破坏性指令，
+ * <p><b>边界</b>：命令审查包含禁止规则、限定格式的项目命令和人工确认。它能挡住常见误操作与明显破坏性指令，
  * 但<b>不是</b>完备沙箱 —— 真正隔离需要容器/虚拟机/受限用户。这里的设计价值在于：
  * 把「安全判断」收敛到一个可测试、可审计的类里，而不是散落在提示词里靠模型自觉。
  */
@@ -37,6 +45,8 @@ public class GuardRole {
     /** 裁决结论。 */
     public enum Outcome {
         ALLOW,
+        CREATE_NEW,
+        RUN_PROJECT_COMMAND,
         CONFIRM,
         DENY
     }
@@ -47,7 +57,11 @@ public class GuardRole {
      * @param outcome 结论
      * @param reason  给用户与模型看的原因（会进入 Observation）
      */
-    public record Decision(Outcome outcome, String reason) {
+    public record Decision(Outcome outcome, String reason, List<String> invocation) {
+
+        public Decision(Outcome outcome, String reason) {
+            this(outcome, reason, List.of());
+        }
 
         public static Decision allow(String reason) {
             return new Decision(Outcome.ALLOW, reason);
@@ -93,6 +107,8 @@ public class GuardRole {
 
     private final Path root;
     private final java.util.function.Predicate<Path> writeProtected;
+    private final BooleanSupplier autoApproveFiles;
+    private final BooleanSupplier autoApproveCommands;
 
     public GuardRole(Path root) {
         this(root, path -> false);
@@ -100,8 +116,23 @@ public class GuardRole {
 
     /** 任务可追加只读输入策略，普通聊天仍使用原有守卫规则。 */
     public GuardRole(Path root, java.util.function.Predicate<Path> writeProtected) {
+        this(root, writeProtected, false);
+    }
+
+    public GuardRole(Path root, java.util.function.Predicate<Path> writeProtected, boolean autoApproveFiles) {
+        this(root, writeProtected, () -> autoApproveFiles);
+    }
+
+    public GuardRole(Path root, java.util.function.Predicate<Path> writeProtected, BooleanSupplier autoApproveFiles) {
+        this(root, writeProtected, autoApproveFiles, () -> false);
+    }
+
+    public GuardRole(Path root, java.util.function.Predicate<Path> writeProtected, BooleanSupplier autoApproveFiles,
+                     BooleanSupplier autoApproveCommands) {
         this.root = root.toAbsolutePath().normalize();
         this.writeProtected = writeProtected;
+        this.autoApproveFiles = autoApproveFiles;
+        this.autoApproveCommands = autoApproveCommands;
     }
 
     public Path root() {
@@ -122,9 +153,22 @@ public class GuardRole {
 
         return switch (tool.risk()) {
             case READ -> Decision.allow("只读操作: " + tool.name());
-            case WRITE -> Decision.confirm("写入操作: " + tool.name() + " 将修改项目文件");
-            case EXECUTE -> reviewCommand(arguments);
+            case WRITE -> reviewWrite(tool, arguments);
+            case EXECUTE -> reviewCommand(tool, arguments);
         };
+    }
+
+    private Decision reviewWrite(Tool tool, JsonNode arguments) {
+        if (autoApproveFiles.getAsBoolean()) {
+            if (tool instanceof ReplaceTextTool) { return Decision.allow("文件模式：自动批准带版本校验的精确替换"); }
+            if (tool.getClass() == WriteFileTool.class && arguments != null) {
+                String path = arguments.path("path").asText("");
+                if (!path.isBlank() && Files.notExists(resolve(path), LinkOption.NOFOLLOW_LINKS)) {
+                    return new Decision(Outcome.CREATE_NEW, "文件模式：自动批准新建项目文件");
+                }
+            }
+        }
+        return Decision.confirm("写入操作: " + tool.name() + " 将修改项目文件");
     }
 
     /** 返回 {@code null} 表示路径检查通过（继续走风险等级判断）。 */
@@ -155,8 +199,9 @@ public class GuardRole {
         return null;
     }
 
-    private Decision reviewCommand(JsonNode arguments) {
-        String command = arguments == null ? "" : arguments.path("command").asText("").trim();
+    private Decision reviewCommand(Tool tool, JsonNode arguments) {
+        String raw = arguments == null ? "" : arguments.path("command").asText("");
+        String command = raw.trim();
         if (command.isEmpty()) {
             return Decision.allow("缺少 command 参数，交由工具报错");
         }
@@ -172,6 +217,12 @@ public class GuardRole {
         String outside = findOutsideAbsolutePath(command);
         if (outside != null) {
             return Decision.deny("命令引用了项目根目录之外的绝对路径 " + outside + "：" + command);
+        }
+        if (tool.getClass() == RunCommandTool.class && autoApproveCommands.getAsBoolean()) {
+            var invocation = ProjectCommand.resolve(root, raw);
+            if (invocation.isPresent()) {
+                return new Decision(Outcome.RUN_PROJECT_COMMAND, "项目模式：自动批准命令 " + command, invocation.get());
+            }
         }
         return Decision.confirm("将在项目根目录执行命令: " + command);
     }

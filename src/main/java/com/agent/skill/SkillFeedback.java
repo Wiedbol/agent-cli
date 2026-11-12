@@ -1,5 +1,6 @@
 package com.agent.skill;
 
+import com.agent.ConsoleList;
 import com.agent.experience.Experience;
 import com.agent.session.Redactor;
 import com.agent.task.*;
@@ -230,9 +231,11 @@ public final class SkillFeedback {
     public void list(PrintStream out) throws IOException {
         var ids = store.ids("feedback");
         if (ids.isEmpty()) { out.println("暂无技能反馈事项。"); }
+        var list = new ConsoleList(out, true);
         for (String id : ids) {
             var entry = read(id);
-            out.println("技能反馈: " + id + "\n类别: " + (entry.kind().equals("SOURCE") ? "待提炼" : "待审查")
+            list.heading("技能反馈: " + id);
+            list.detail("类别: " + (entry.kind().equals("SOURCE") ? "待提炼" : "待审查")
                     + "\n来源任务: " + entry.taskId() + "\n加载版本: " + entry.version()
                     + "\n经验: " + (entry.experience() == null ? "未确认/未提炼" : entry.experience().id())
                     + "\n观察事实: " + SkillStore.JSON.writeValueAsString(entry.facts())

@@ -5,6 +5,8 @@ import com.agent.llm.ToolCall;
 import com.agent.session.SessionRecorder;
 import com.agent.tool.Tool;
 import com.agent.tool.ToolResult;
+import com.agent.tool.WriteFileTool;
+import com.agent.tool.RunCommandTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
@@ -45,11 +47,12 @@ public class ControllerRole {
         default void modelFailed(IOException failure, long millis) { }
         default void beforeTool(ToolCall call, Tool.Risk risk) { }
         default void approvalRequired() { }
+        default void toolBlocked() { }
         default void toolFinished(ToolCall call, boolean success, String observation) { }
         default void roundFinished() { }
     }
 
-    public static final int DEFAULT_MAX_STEPS = 12;
+    public static final int DEFAULT_MAX_STEPS = 30;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -99,12 +102,20 @@ public class ControllerRole {
         return runTaskResult(task).answer();
     }
 
+    public String runTaskWithAdvice(String task, String advice) {
+        return runTaskResult(task, DecisionObserver.NONE, advice).answer();
+    }
+
     /** 用类型区分真正的完成声明与故障，避免任务协调器解析中文提示。 */
     public RunResult runTaskResult(String task) {
         return runTaskResult(task, DecisionObserver.NONE);
     }
 
     public RunResult runTaskResult(String task, DecisionObserver observer) {
+        return runTaskResult(task, observer, "");
+    }
+
+    private RunResult runTaskResult(String task, DecisionObserver observer, String advice) {
         Continuation continued = observer.continuation();
         if (continued != null) { llm.restoreHistory(continued.messages()); }
         if (task != null) {
@@ -124,7 +135,7 @@ public class ControllerRole {
                 checkInputs.run();
                 observer.beforeRequest();
                 try {
-                    response = llm.ask(registrar.toolDefinitions());
+                    response = llm.ask(registrar.toolDefinitions(), advice);
                 } catch (IOException failed) {
                     observer.modelFailed(failed, (System.nanoTime() - startedAt) / 1_000_000);
                     return new RunResult(StopReason.MODEL_FAILED, "LLM 调用失败: " + failed.getMessage());
@@ -184,13 +195,29 @@ public class ControllerRole {
         }
         ToolResult preview = executor.preview(tool, arguments);
         if (!preview.success()) { return new DispatchResult(false, preview.toObservation()); }
-        if (preview.output() != null && !preview.output().isEmpty()) { trace(preview.output()); }
-        if (decision.needsConfirmation() && !user.autoApprove()) { observer.approvalRequired(); }
+        boolean manualApproval = decision.needsConfirmation() && !user.autoApprove();
+        if (preview.output() != null && !preview.output().isEmpty()) {
+            if (manualApproval) { user.say(preview.output()); }
+            else { trace(preview.output()); }
+        }
+        if (manualApproval) { observer.approvalRequired(); }
         if (decision.needsConfirmation() && !user.confirm(decision.reason() + "，是否允许？")) {
             return new DispatchResult(false, "用户拒绝了这次工具调用 —— " + decision.reason());
         }
+        if (manualApproval) {
+            try { checkInputs.run(); }
+            catch (RuntimeException changed) {
+                observer.toolBlocked();
+                throw changed;
+            }
+        }
 
-        ToolResult result = executor.execute(tool, arguments);
+        ToolResult result = switch (decision.outcome()) {
+            case CREATE_NEW -> executor.createNew((WriteFileTool) tool, arguments);
+            case RUN_PROJECT_COMMAND -> executor.runProjectCommand((RunCommandTool) tool, arguments,
+                    decision.invocation());
+            default -> executor.execute(tool, arguments);
+        };
         trace("[执行员] " + (result.success() ? "执行成功" : "执行失败")
                 + "（" + result.durationMillis() + " ms）");
         return new DispatchResult(result.success(), result.toObservation());

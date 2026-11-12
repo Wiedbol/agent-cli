@@ -1,5 +1,6 @@
 package com.agent;
 
+import com.agent.command.ProcessCommandRunner;
 import com.agent.llm.ApiKeyLoader;
 import com.agent.llm.DeepSeekClient;
 import com.agent.roles.ControllerRole;
@@ -64,6 +65,7 @@ public class Main {
         if (options.tasks() || options.taskStatus() != null || options.reagreeId() != null || options.budgetTaskId() != null
                 || options.retryTask() != null || options.abandonTask() != null || options.replanTask() != null
                 || options.experiences() || options.experience() != null || options.disableExperience() != null
+                || options.shareExperience() != null || options.unshareExperience() != null
                 || options.extractExperience() != null && !ConsoleStreams.hasInteractiveConsole()) {
             CodingAgentCli query = new CodingAgentCli(root, null, false, options.maxSteps(),
                     ConsoleStreams.newStdinReader(), System.out, System.err);
@@ -71,6 +73,8 @@ public class Main {
                     : options.experiences() ? query.listExperiences()
                     : options.experience() != null ? query.showExperience(options.experience())
                     : options.disableExperience() != null ? query.disableExperience(options.disableExperience())
+                    : options.shareExperience() != null ? query.updateExperienceSharing(options.shareExperience(), true)
+                    : options.unshareExperience() != null ? query.updateExperienceSharing(options.unshareExperience(), false)
                     : options.replanTask() != null ? query.replanTask(options.replanTask(), ConsoleStreams.hasInteractiveConsole())
                     : options.retryTask() != null
                     ? query.retryUncertainOperation(options.retryTask(), options.operation(), ConsoleStreams.hasInteractiveConsole())
@@ -97,8 +101,8 @@ public class Main {
 
         String apiKey = ApiKeyLoader.loadDeepSeekKey();
         if (apiKey == null || apiKey.isBlank()) {
-            if (options.task() != null || options.resumeTask() != null || options.extractExperience() != null) {
-                System.err.println("错误：--task / --resume-task / --extract-experience 需要 DeepSeek Key。");
+            if (options.task() != null || options.resumeTask() != null || options.extractExperience() != null || options.skillControl() != null) {
+                System.err.println("错误：管理任务、经验提炼和使用归档技能库的聊天需要 DeepSeek Key。");
                 System.err.println("      请在项目根目录 .env 写入 DEEPSEEK_API_KEY=你的Key。");
                 System.exit(2);
                 return;
@@ -121,24 +125,26 @@ public class Main {
 
         // 来源任务和经验提炼同样按请求计费，不能在一次预留下由 HTTP 层隐式重发。
         boolean managedWork = options.task() != null || options.resumeTask() != null || options.extractExperience() != null;
-        DeepSeekClient model = managedWork
-                ? DeepSeekClient.singleAttempt(apiKey, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel())
-                : new DeepSeekClient(apiKey);
+        DeepSeekClient taskModel = DeepSeekClient.singleAttempt(apiKey, DeepSeekClient.defaultEndpoint(), DeepSeekClient.defaultModel());
+        DeepSeekClient model = managedWork ? taskModel : new DeepSeekClient(apiKey);
         CodingAgentCli cli = new CodingAgentCli(root,
                 model,
                 options.autoApprove(),
+                options.autoApproveFiles(),
                 options.maxSteps(),
                 ConsoleStreams.newStdinReader(),
                 System.out,
                 System.err,
-                session);
+                session,
+                new ProcessCommandRunner());
 
         int exitCode = options.extractExperience() != null
                 ? cli.extractExperience(options.extractExperience(), true)
                 : options.resumeTask() != null ? cli.resumeManagedTask(options.resumeTask()) : options.task() != null
                 ? options.knowledgeMode() == KnowledgeMode.SKILL
                     ? cli.startSkillTask(options.task(), options.acceptanceCommand(), options.skillControl(), options.skillSource(), ConsoleStreams.hasInteractiveConsole())
-                    : cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), options.knowledgeMode()) : cli.runRepl();
+                    : cli.startManagedTask(options.task(), options.acceptanceCommand(), ConsoleStreams.hasInteractiveConsole(), options.knowledgeMode())
+                : cli.runRepl(options.skillControl(), options.skillSource(), taskModel, ConsoleStreams.hasInteractiveConsole());
         if (exitCode != 0) {
             System.exit(exitCode);
         }
@@ -183,6 +189,7 @@ public class Main {
      *
      * @param task       单任务模式的任务文本，{@code null} 表示交互式
      * @param autoApprove 是否自动同意守卫的确认请求（{@code --yes}）
+     * @param autoApproveFiles 是否自动批准新建文件和带版本校验的精确编辑
      * @param local      是否强制使用本地回显模式（{@code --local}）
      * @param upperCase  是否把输出转成大写（{@code --upper}，Lab01 挑战任务 3）
      * @param root       项目根目录（沙箱边界），默认当前工作目录
@@ -193,17 +200,19 @@ public class Main {
      * @param sessionDir 会话目录（{@code --session-dir}），{@code user} 表示用户目录
      * @param exportId   要导出成 markdown 的会话（{@code --export}），不配置则正常运行
      */
-    record Options(String task, boolean autoApprove, boolean local, boolean upperCase,
+    record Options(String task, boolean autoApprove, boolean autoApproveFiles, boolean local, boolean upperCase,
                    Path root, int maxSteps, String resume, boolean newSession,
                    String sessionName, String sessionDir, String exportId,
                    boolean tasks, String taskStatus, String acceptanceCommand, String reagreeId, String budgetTaskId,
                    String resumeTask, String retryTask, String operation, String abandonTask, String replanTask,
-                   String extractExperience, boolean experiences, String experience, String disableExperience, boolean noExperiences,
+                   String extractExperience, boolean experiences, String experience, String disableExperience,
+                   String shareExperience, String unshareExperience, boolean noExperiences,
                    KnowledgeMode knowledgeMode, boolean help, Path skillControl, Path skillSource) {
 
         static Options parse(String[] args) {
             String task = null;
             boolean autoApprove = false;
+            boolean autoApproveFiles = false;
             boolean local = false;
             boolean upperCase = false;
             Path root = null;
@@ -227,6 +236,8 @@ public class Main {
             boolean experiences = false;
             String experience = null;
             String disableExperience = null;
+            String shareExperience = null;
+            String unshareExperience = null;
             boolean maximumSpecified = false;
             boolean noExperiences = false;
             KnowledgeMode knowledgeMode = null;
@@ -256,7 +267,7 @@ public class Main {
                         case "--experiences" -> experiences = true;
                         case "--task-status", "--accept-command", "--reagree-acceptance", "--task-budget", "--resume-task",
                                 "--retry-operation", "--operation", "--abandon-task", "--replan-task",
-                                "--extract-experience", "--experience", "--disable-experience" -> {
+                                "--extract-experience", "--experience", "--disable-experience", "--share-experience", "--unshare-experience" -> {
                             if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) {
                                 throw new IllegalArgumentException(arg + " 需要非空参数");
                             }
@@ -264,6 +275,8 @@ public class Main {
                             else if (arg.equals("--extract-experience")) { extractExperience = args[++i]; }
                             else if (arg.equals("--experience")) { experience = args[++i]; }
                             else if (arg.equals("--disable-experience")) { disableExperience = args[++i]; }
+                            else if (arg.equals("--share-experience")) { shareExperience = args[++i]; }
+                            else if (arg.equals("--unshare-experience")) { unshareExperience = args[++i]; }
                             else if (arg.equals("--replan-task")) { replanTask = args[++i]; }
                             else if (arg.equals("--retry-operation")) { retryTask = args[++i]; }
                             else if (arg.equals("--operation")) { operation = args[++i]; }
@@ -280,6 +293,7 @@ public class Main {
                             task = args[++i];
                         }
                         case "--yes", "-y" -> autoApprove = true;
+                        case "--auto-approve-files" -> autoApproveFiles = true;
                         case "--skill-control", "--skill-source" -> {
                             String flag = args[i];
                             if (i + 1 >= args.length || args[i + 1].isBlank() || args[i + 1].startsWith("--")) { throw new IllegalArgumentException(flag + " 需要规范绝对路径"); }
@@ -335,7 +349,7 @@ public class Main {
                     + (reagreeId == null ? 0 : 1) + (budgetTaskId == null ? 0 : 1) + (resumeTask == null ? 0 : 1)
                     + (retryTask == null ? 0 : 1) + (abandonTask == null ? 0 : 1) + (replanTask == null ? 0 : 1)
                     + (extractExperience == null ? 0 : 1) + (experiences ? 1 : 0) + (experience == null ? 0 : 1)
-                    + (disableExperience == null ? 0 : 1);
+                    + (disableExperience == null ? 0 : 1) + (shareExperience == null ? 0 : 1) + (unshareExperience == null ? 0 : 1);
             if (managedModes > 1 || managedModes > 0 && (local || resume != null || newSession
                     || sessionName != null || sessionDir != null || exportId != null)) {
                 throw new IllegalArgumentException("管理任务、查询、本地回显和聊天恢复参数不能混用");
@@ -359,7 +373,8 @@ public class Main {
             if ((retryTask != null || abandonTask != null || replanTask != null) && maximumSpecified) {
                 throw new IllegalArgumentException("人工处置不调整预算；请单独使用 --task-budget");
             }
-            if ((extractExperience != null || experiences || experience != null || disableExperience != null) && maximumSpecified) {
+            if ((extractExperience != null || experiences || experience != null || disableExperience != null
+                    || shareExperience != null || unshareExperience != null) && maximumSpecified) {
                 throw new IllegalArgumentException("经验操作不调整任务预算");
             }
             if (noExperiences && task == null) { throw new IllegalArgumentException("--no-experiences 仅用于新任务；恢复沿用已保存选项"); }
@@ -369,13 +384,18 @@ public class Main {
             if (knowledgeMode != null && noExperiences) {
                 throw new IllegalArgumentException("--knowledge-mode 与 --no-experiences 不能混用");
             }
-            if ((skillControl == null) != (skillSource == null) || skillControl != null && (task == null || knowledgeMode != KnowledgeMode.SKILL)) {
-                throw new IllegalArgumentException("--skill-control/--skill-source 只成对用于新建 SKILL 任务，恢复读取已保存绑定");
+            boolean skillTask = task != null && knowledgeMode == KnowledgeMode.SKILL;
+            boolean skillRepl = managedModes == 0 && !local && exportId == null;
+            if ((skillControl == null) != (skillSource == null) || skillControl != null && !skillTask && !skillRepl) {
+                throw new IllegalArgumentException("--skill-control/--skill-source 只成对用于新建 SKILL 任务或聊天中的 /skill");
             }
-            return new Options(task, autoApprove, local, upperCase, root, maxSteps,
+            if (autoApprove && autoApproveFiles) {
+                throw new IllegalArgumentException("--yes 与 --auto-approve-files 不能混用");
+            }
+            return new Options(task, autoApprove, autoApproveFiles, local, upperCase, root, maxSteps,
                     resume, newSession, sessionName, sessionDir, exportId, tasks, taskStatus, acceptanceCommand, reagreeId, budgetTaskId,
                     resumeTask, retryTask, operation, abandonTask, replanTask,
-                    extractExperience, experiences, experience, disableExperience, noExperiences,
+                    extractExperience, experiences, experience, disableExperience, shareExperience, unshareExperience, noExperiences,
                     knowledgeMode != null ? knowledgeMode : noExperiences ? KnowledgeMode.NONE : KnowledgeMode.EXPERIENCE, help, skillControl, skillSource);
         }
     }
@@ -393,8 +413,9 @@ public class Main {
                   --resume-task 任务ID       显式恢复，沿用已保存知识模式与累计预算
                   --tasks / --task-status ID 无模型查询任务及知识模式
                   --accept-command 命令      新任务的验收命令，默认 mvn test
-                  --max-steps 次数           新任务累计请求上限，默认 12
+                  --max-steps 次数           聊天单轮或新管理任务累计请求上限，默认 %d
                   --yes                      仅跳过普通工具确认
+                  --auto-approve-files       免确认新建项目文件与精确替换，命令和整文件覆盖仍需确认
                   --start-skill-batch --request-limit N 显式新建累计有界技能批次，无需 Key
                   --generate-skill E1,E2 --skill-batch B 从合格经验生成未启用候选
                   --revise-skill V --revision-reason 原因 生成时指定已发布父版本及修订原因
@@ -415,13 +436,21 @@ public class Main {
                   --revise-from-feedback F1,F2 --skill-batch B --revise-skill V --revision-reason TEXT [--feedback-source S --feedback-catalog C] 显式有界修订
                   --regression-trials T1,T2 审核/批准修订时绑定必要旧开发回归
                   --task TEXT --knowledge-mode skill [--skill-control A --skill-source S] 使用已批准技能；恢复不覆盖技能库
+                  聊天输入 /skill <修复目标> 发起技能任务，启动聊天时可指定 --skill-control A --skill-source S
+                  聊天输入 /tasks、/status <任务ID>、/resume-task <任务ID> 查看或恢复任务
+                  聊天输入 /task-budget <任务ID> <新总上限> 调整暂停任务的累计请求上限
+                  聊天输入 /skills、/skill-info <版本ID> 查看已发布技能
+                  聊天输入 /extract-experience [任务ID] 提炼经验，省略 ID 时使用当前任务
+                  --share-experience / --unshare-experience <经验ID> 在原项目设置跨项目共享
+                  聊天输入 /experiences、/experience <经验ID> 查看已保存经验
+                  聊天输入 /help 查看完整聊天命令列表
                 冻结版本对照使用独立入口（配置、模式和额度须事先审阅）：
                   java -cp agent-cli.jar com.agent.evaluation.SkillEvaluationMain
                     --simulate ROOT CONFIG 本机HTTP模拟；--real ROOT CONFIG 仅另行批准后真实运行
                     --report ARCHIVE 无 Key 只读检查对照报告
                   --local                    无模型本地回显
                   --help / -h                仅显示帮助，不读取 Key 或执行任务
-                不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""");
+                不指定任务入口时进入普通聊天；知识模式不改变普通聊天工具规则。""".formatted(ControllerRole.DEFAULT_MAX_STEPS));
     }
 
     /** 解析 {@code --upper}：只判断开关是否存在。 */

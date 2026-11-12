@@ -1,5 +1,6 @@
 package com.agent.skill;
 
+import com.agent.ConsoleList;
 import com.agent.CodingAgentCli;
 import com.agent.command.CommandRunner;
 import com.agent.llm.*;
@@ -358,37 +359,45 @@ public final class SkillTrials {
         Path folder = control.resolve("skill-trials");
         if (!Files.exists(folder)) { out.println("暂无技能试用。"); return; }
         canonical(folder);
-        try (var children = Files.list(folder)) { for (Path child : children.sorted().toList()) { print(readTrial(control, child.getFileName().toString())); } }
+        var list = new ConsoleList(out, true);
+        try (var children = Files.list(folder)) {
+            for (Path child : children.sorted().toList()) { print(readTrial(control, child.getFileName().toString()), list); }
+        }
     }
     private void print(SkillTrial record) throws IOException {
-        out.println("技能试用: " + record.id + "\n状态: " + record.status + "\n候选: " + record.candidateId + "@" + record.candidateSha256
+        print(record, new ConsoleList(out, false));
+    }
+
+    private void print(SkillTrial record, ConsoleList output) throws IOException {
+        output.heading("技能试用: " + record.id);
+        output.detail("状态: " + record.status + "\n候选: " + record.candidateId + "@" + record.candidateSha256
                 + "\n任务: " + record.taskId + "\n已加载: " + record.loaded + "\n声明: " + record.declaration + "；" + record.declarationReason
                 + "\n试用请求: " + record.requests.size() + "\n原因: " + record.reason);
-        out.println("开发样例: " + record.caseId + "（" + record.caseKind + "）\n冻结配置: " + record.configuration + "\n冻结输入摘要: " + record.initial);
-        if (Set.of("PREPARED", "RUNNING").contains(record.status)) { out.println("尚无最终完成记录，结果未知；不自动重发请求"); }
-        SkillCandidates.printBatch(SkillStore.archived(Path.of(record.source), root).batch(record.batchId), out);
-        for (var event : record.events) { out.println("事件: " + event); }
+        output.detail("开发样例: " + record.caseId + "（" + record.caseKind + "）\n冻结配置: " + record.configuration + "\n冻结输入摘要: " + record.initial);
+        if (Set.of("PREPARED", "RUNNING").contains(record.status)) { output.detail("尚无最终完成记录，结果未知；不自动重发请求"); }
+        SkillCandidates.printBatch(SkillStore.archived(Path.of(record.source), root).batch(record.batchId), output, false);
+        for (var event : record.events) { output.detail("事件: " + event); }
         for (var request : record.requests) {
-            out.println("请求: " + request.id + "；状态: " + request.status + "；摘要: " + request.sha256
+            output.detail("请求: " + request.id + "；状态: " + request.status + "；摘要: " + request.sha256
                     + "；目录已组装=" + request.catalogIncluded + "；指南已组装=" + request.guideIncluded
                     + "；输入token=" + (request.promptTokens == null ? "未知" : request.promptTokens)
                     + "；输出token=" + (request.completionTokens == null ? "未知" : request.completionTokens));
         }
         if (record.taskId != null) {
             var tasks = evidenceStore(record);
-            if (tasks == null) { out.println("任务证据尚未归档且当前根中不可用，操作结果未知"); return; }
+            if (tasks == null) { output.detail("任务证据尚未归档且当前根中不可用，操作结果未知"); return; }
             var task = tasks.read(record.taskId);
-            out.println("任务已保存状态: " + task.state + "\n任务累计请求: " + task.progress.requests + "/" + task.progress.maxRequests
+            output.detail("任务已保存状态: " + task.state + "\n任务累计请求: " + task.progress.requests + "/" + task.progress.maxRequests
                     + "\n工具调用: " + task.progress.tools + "\n任务输入token: " + task.progress.promptTokens
                     + "\n任务输出token: " + task.progress.completionTokens + "\n任务用量未知请求: " + task.progress.unknownRequests);
-            out.println("任务耗时ms: " + task.progress.elapsedMillis);
+            output.detail("任务耗时ms: " + task.progress.elapsedMillis);
             for (var check : task.checks) {
                 var evidence = tasks.readEvidence(task, check);
-                out.println("验收: " + evidence.kind() + " " + evidence.verdict() + "；证据=" + check.id());
+                output.detail("验收: " + evidence.kind() + " " + evidence.verdict() + "；证据=" + check.id());
             }
             for (var decision : task.progress.decisions) {
                 for (var operation : decision.operations) {
-                    out.println("操作: " + operation.callId + " " + operation.tool + " " + operation.status + "；文件变化=" + operation.changes.keySet());
+                    output.detail("操作: " + operation.callId + " " + operation.tool + " " + operation.status + "；文件变化=" + operation.changes.keySet());
                 }
             }
         }

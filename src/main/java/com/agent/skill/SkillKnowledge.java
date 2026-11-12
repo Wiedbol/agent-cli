@@ -10,6 +10,7 @@ import java.util.List;
 /** 试用和已发布技能共用任务入口，目录之外的知识不能绕过加载工具。 */
 public interface SkillKnowledge {
     default String trialId() { return null; }
+    default String frozenCommand() { return null; }
     default SkillTask state() { return null; }
     void bind(TaskRecord task) throws IOException;
     default List<Tool> tools() { return List.of(new LoadSkillTool(this), new DeclareSkillTool(this)); }

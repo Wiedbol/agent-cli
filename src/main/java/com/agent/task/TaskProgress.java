@@ -6,7 +6,10 @@ import com.agent.llm.Message;
 import com.agent.roles.ControllerRole;
 import com.agent.task.TaskRecord.DecisionState;
 import com.agent.task.TaskRecord.OperationState;
+import com.agent.tool.RunCommandTool;
 import com.agent.tool.Tool;
+import com.agent.tool.ToolRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -16,6 +19,7 @@ import java.util.TreeSet;
 
 /** 在请求和工具副作用前保存预留，记录失败来源与实际文件差异。 */
 public final class TaskProgress implements ControllerRole.DecisionObserver {
+    private static final ObjectMapper JSON = new ObjectMapper();
     public static final class Pause extends RuntimeException {
         public Pause(String reason) { super(reason); }
     }
@@ -132,10 +136,14 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
 
     @Override public void approvalRequired() {
         if (!interactive) {
-            decision.operations.get(operationIndex).status = OperationState.BLOCKED;
-            save();
+            toolBlocked();
             throw new Pause("非交互任务需要人工批准，未执行该工具；可信任务可使用 --yes");
         }
+    }
+
+    @Override public void toolBlocked() {
+        decision.operations.get(operationIndex).status = OperationState.BLOCKED;
+        save();
     }
 
     @Override public void toolFinished(ToolCall call, boolean success, String observation) {
@@ -143,9 +151,10 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         operation.status = success ? OperationState.SUCCEEDED : OperationState.FAILED;
         operation.observation = observation;
         task.checkpoint.messages.add(Message.tool(call.id(), observation));
-        String request = WorkspaceSnapshot.hash((call.name() + "\n" + call.arguments())
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        if (success) { task.progress.toolErrors.remove(request); }
+        String request = toolRequestKey(call.name(), call.arguments());
+        boolean optionalSkillUnavailable = "load_skill".equals(operation.tool) && task.skills != null
+                && task.skills.firstUnavailableSharedLoad(call.id());
+        if (success || optionalSkillUnavailable) { task.progress.toolErrors.remove(request); }
         else {
             String error = CoreError.key(call.name() + " " + observation);
             task.progress.toolErrors.put(request, error);
@@ -173,29 +182,56 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
     }
 
     @Override public void roundFinished() {
-        if (!firstKnowledgeProgress()) { advanceRound(); }
+        if (!firstPreparationProgress()) { advanceRound(); }
         decision.roundFinished = true;
         if (repeated()) { task.checkpoint.beginAcceptance(false); }
         save();
         if (repeated()) { throw new Recheck(); }
     }
 
-    /** 首次有效知识审阅是准备进展；仅豁免成功只读轮，避免尚未修复就被判为连续修复失败。 */
-    private boolean firstKnowledgeProgress() {
+    /** 仅豁免无副作用的首次知识审阅或源码诊断，请求仍由 beforeRequest 计入预算。 */
+    private boolean firstPreparationProgress() {
         if (decision.operations.isEmpty() || decision.operations.stream().anyMatch(op ->
                 op.status != OperationState.SUCCEEDED || !Tool.Risk.READ.name().equals(op.risk) || !op.changes.isEmpty())) {
             return false;
         }
-        return decision.operations.stream().anyMatch(op -> (op.tool.equals("load_skill") || op.tool.equals("declare_skill"))
+        boolean firstKnowledge = decision.operations.stream().anyMatch(op -> (op.tool.equals("load_skill") || op.tool.equals("declare_skill"))
                 && task.progress.decisions.stream().filter(previous -> previous != decision)
                 .flatMap(previous -> previous.operations.stream())
                 .noneMatch(previous -> previous.status == OperationState.SUCCEEDED && previous.tool.equals(op.tool)));
+        return firstKnowledge || firstSourceDiagnosis();
+    }
+
+    private boolean firstSourceDiagnosis() {
+        if (task.progress.acceptanceErrors.isEmpty() || !task.progress.toolErrors.isEmpty()
+                || decision.operations.stream().noneMatch(this::readBusinessSource)) {
+            return false;
+        }
+        // 从持久化的历史识别首次读取。恢复任务后，重复读取或读取另一份源码也不能再次豁免。
+        return task.progress.decisions.stream().filter(previous -> previous != decision)
+                .flatMap(previous -> previous.operations.stream())
+                .noneMatch(op -> !Tool.Risk.READ.name().equals(op.risk) || readBusinessSource(op));
+    }
+
+    private boolean readBusinessSource(TaskRecord.Operation operation) {
+        if (operation.status != OperationState.SUCCEEDED || !"read_file".equals(operation.tool)) { return false; }
+        try {
+            Path file = new ToolRequest(root, JSON.readTree(operation.arguments)).resolvePath("path");
+            String relative = "/" + root.relativize(file).toString().replace('\\', '/');
+            return relative.contains("/src/main/java/") && relative.endsWith(".java");
+        } catch (IOException | IllegalArgumentException | SecurityException invalid) {
+            return false;
+        }
     }
 
     /** 第三个决策轮次须用新报告确认旧错误，不能把尚未验收的修改直接判为失败。 */
     public void acceptanceChecked(TaskAcceptance.Evidence evidence, boolean advance) {
         task.progress.acceptanceErrors.clear();
-        if (!evidence.verdict().equals("PASSED")) {
+        if (evidence.verdict().equals("PASSED")) {
+            if (advance && task.skillTrialId != null && "final".equals(evidence.kind())) {
+                retireUnexecutedCommandErrors();
+            }
+        } else {
             var failures = evidence.failures() == null || evidence.failures().isEmpty()
                     ? java.util.List.of(evidence.reason()) : evidence.failures();
             for (String failure : failures) {
@@ -210,6 +246,24 @@ public final class TaskProgress implements ControllerRole.DecisionObserver {
         if (advance) { advanceRound(); }
         save();
         if (repeated()) { throw new Pause("同一核心错误持续三个决策轮次；当前复核仍未解决"); }
+    }
+
+    /** 任务已独立验证后，未启动进程的试用拒绝不再计为活动错误，操作记录仍保留。 */
+    private void retireUnexecutedCommandErrors() {
+        for (var decision : task.progress.decisions) {
+            for (var operation : decision.operations) {
+                if (operation.status == OperationState.FAILED && "run_command".equals(operation.tool)
+                        && operation.processes.isEmpty() && operation.changes.isEmpty()
+                        && RunCommandTool.isFrozenCommandRejection(task.command, operation.observation)) {
+                    task.progress.toolErrors.remove(toolRequestKey(operation.tool, operation.arguments),
+                            CoreError.key(operation.tool + " " + operation.observation));
+                }
+            }
+        }
+    }
+
+    private static String toolRequestKey(String tool, String arguments) {
+        return WorkspaceSnapshot.hash((tool + "\n" + arguments).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private void retainActiveErrors() {

@@ -6,28 +6,53 @@ import java.util.*;
 
 /** 固定知识版本与请求事实随任务原子保存，消费仍由原任务账本统计。 */
 public final class SkillTask {
+    static final String SHARED_LOAD_UNAVAILABLE = "SHARED_LOAD_UNAVAILABLE";
     public String control, source;
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     public Reference fixed;
     public int firstRequest = 1;
     public List<Reference> offered = new ArrayList<>(), loaded = new ArrayList<>();
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    public Map<String, SharedSkills.Origin> shared = new LinkedHashMap<>();
     public List<Event> events = new ArrayList<>();
     public List<String> failures = new ArrayList<>();
     public record Reference(String skillId, String versionId, String versionSha256, String candidateSha256, String guideSha256) { }
     public record Event(String type, String callId, String skillId, String versionId, boolean success, String detail) { }
     public record Request(SkillRequests.Payload payload, List<Reference> included) { }
+
+    public String sharedProject(String versionId) {
+        var origin = shared.get(versionId);
+        return origin == null ? null : origin.project().replace('\\', '/');
+    }
+
+    /** 目录过期后的第一次拒绝表示可选知识消失，保留审计，重复尝试仍计入失败。 */
+    public boolean firstUnavailableSharedLoad(String callId) {
+        if (events.isEmpty()) { return false; }
+        var last = events.get(events.size() - 1);
+        return SHARED_LOAD_UNAVAILABLE.equals(last.type()) && Objects.equals(callId, last.callId())
+                && events.stream().filter(e -> SHARED_LOAD_UNAVAILABLE.equals(e.type())
+                        && Objects.equals(last.versionId(), e.versionId())).count() == 1;
+    }
+
     public static void validate(TaskRecord task) throws IOException {
         var state = task.skills;
         if (state == null || task.knowledgeMode != KnowledgeMode.SKILL || task.skillTrialId != null
                 || (state.control == null) != (state.source == null) || state.firstRequest <= 0
-                || state.offered == null || state.loaded == null || state.events == null || state.failures == null
+                || state.offered == null || state.loaded == null || state.shared == null
+                || state.events == null || state.failures == null
                 || state.firstRequest > task.progress.requests + 1 || state.loaded.size() > 3) {
             throw new IOException("任务技能状态缺失或不合法");
         }
         for (var reference : state.offered) { validate(reference); }
+        for (var binding : state.shared.entrySet()) {
+            if (binding.getValue() == null || state.offered.stream().noneMatch(pin -> pin.versionId().equals(binding.getKey()))) {
+                throw new IOException("共享技能来源缺少对应目录授权");
+            }
+            binding.getValue().validate();
+        }
         if (state.fixed != null) {
             validate(state.fixed);
-            if (state.source == null || state.offered.stream().anyMatch(pin -> !pin.equals(state.fixed))) {
+            if (state.source == null || !state.shared.isEmpty() || state.offered.stream().anyMatch(pin -> !pin.equals(state.fixed))) {
                 throw new IOException("冻结评测只能发现指定的已批准版本");
             }
         }

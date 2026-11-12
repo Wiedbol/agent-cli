@@ -68,6 +68,7 @@ class CodingAgentCliManagedTaskTest {
         });
 
         assertEquals(0, query.listTasks());
+        assertTrue(text().replace("\r\n", "\n").startsWith("任务: " + id + "\n  状态: Paused\n  目标: 修复计算错误\n"), text());
         assertEquals(0, query.showTask(id));
         assertTrue(text().contains(id));
         assertTrue(text().contains("修复计算错误"));
@@ -296,6 +297,50 @@ class CodingAgentCliManagedTaskTest {
         assertTrue(text().contains("Paused"), text());
         assertTrue(text().contains("最大步数"), text());
         assertFalse(text().contains("final:"), text());
+    }
+
+    @Test
+    void shouldKeepPauseReasonVisibleInChat() throws Exception {
+        var read = new ToolCall("read", new ToolCall.Function("read_file", "{\"path\":\"pom.xml\"}"));
+        var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(read), 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var input = new BufferedReader(new StringReader("/task 检查项目\nexit\n"));
+        var repl = new CodingAgentCli(root, model, true, 1, input, stream, stream, null, passingRunner());
+
+        assertEquals(0, repl.runRepl(null, null, model, false));
+
+        assertTrue(text().contains(" · Paused · 暂无最终验收结果 · 暂停原因：") && text().contains("最大步数"), text());
+        assertFalse(text().contains("[守卫]") || text().contains("正在处理…") || text().contains("模型请求:"), text());
+        assertEquals(1, model.callCount());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void shouldUseFileApprovalFromChatForManagedStartAndResume(boolean resume) throws Exception {
+        var create = new ToolCall("create", new ToolCall.Function("write_file",
+                "{\"path\":\"src/main/java/Notes.txt\",\"content\":\"ok\"}"));
+        var response = new LLMResponse(null, List.of(create), 1, 1);
+        var done = new LLMResponse("请独立验收", null, 1, 1);
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var err = new PrintStream(errors, true, StandardCharsets.UTF_8);
+        var model = new FakeLLMClient(resume ? List.of(done) : List.of(response, done));
+        String command = "/task 添加项目说明";
+        if (resume) {
+            var manual = new CodingAgentCli(root, new FakeLLMClient(List.of(response)), false, 4,
+                    new BufferedReader(new StringReader("")), stream, err, null, passingRunner());
+            assertEquals(1, manual.startManagedTask("添加项目说明", null, false), text());
+            assertTrue(text().contains("非交互任务需要人工批准"), text());
+            assertTrue(Files.notExists(root.resolve("src/main/java/Notes.txt")));
+            String id = taskId();
+            output.reset();
+            command = "/resume-task " + id;
+        }
+        var input = new BufferedReader(new StringReader("/approval files\n" + command + "\nexit\n"));
+        var repl = new CodingAgentCli(root, model, false, 4, input, stream, err, null, passingRunner());
+
+        assertEquals(0, repl.runRepl(null, null, model, false), text() + errors.toString(StandardCharsets.UTF_8));
+        assertEquals("ok", Files.readString(root.resolve("src/main/java/Notes.txt")));
+        assertTrue(text().contains("当前审批模式: files") && text().contains(" · Verified · "), text());
     }
 
     @Test

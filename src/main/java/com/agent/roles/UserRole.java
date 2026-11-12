@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * 角色一：<b>用户</b>。
@@ -23,7 +24,9 @@ public class UserRole {
 
     private final BufferedReader in;
     private final PrintStream out;
-    private final boolean autoApprove;
+    private final BooleanSupplier autoApprove;
+    private final PrintStream approvalLog;
+    private final Runnable beforeOutput;
 
     /**
      * @param in          输入流（交互式终端或测试用的字符串流）
@@ -32,14 +35,26 @@ public class UserRole {
      *                    适合脚本化场景；此时用户仍可随时中断进程）
      */
     public UserRole(BufferedReader in, PrintStream out, boolean autoApprove) {
+        this(in, out, autoApprove, out, () -> { });
+    }
+
+    public UserRole(BufferedReader in, PrintStream out, boolean autoApprove, PrintStream approvalLog,
+                    Runnable beforeOutput) {
+        this(in, out, () -> autoApprove, approvalLog, beforeOutput);
+    }
+
+    public UserRole(BufferedReader in, PrintStream out, BooleanSupplier autoApprove, PrintStream approvalLog,
+                    Runnable beforeOutput) {
         this.in = in;
         this.out = out;
         this.autoApprove = autoApprove;
+        this.approvalLog = approvalLog;
+        this.beforeOutput = beforeOutput;
     }
 
     /** 是否处于「自动同意」模式。 */
     public boolean autoApprove() {
-        return autoApprove;
+        return autoApprove.getAsBoolean();
     }
 
     /** 读取下一条任务；输入结束（EOF）时返回 {@link Optional#empty()}。 */
@@ -60,11 +75,11 @@ public class UserRole {
      * @return 用户是否同意
      */
     public boolean confirm(String question) {
-        if (autoApprove) {
-            out.println("用户确认 > " + question + " → 已按 --yes 自动同意");
+        if (autoApprove()) {
+            approvalLog.println("用户确认 > " + question + " → 已按 --yes 自动同意");
             return true;
         }
-        out.println("用户确认 > " + question + " （输入 y 同意 / 其它任意输入拒绝）");
+        say("用户确认 > " + question + " （输入 y 同意 / 其它任意输入拒绝）");
         out.print("y/N > ");
         out.flush();
         String answer;
@@ -85,6 +100,7 @@ public class UserRole {
 
     /** 用户角色的输出（不参与决策，只负责显示）。 */
     public void say(String message) {
+        beforeOutput.run();
         out.println(message);
     }
 }

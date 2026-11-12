@@ -13,7 +13,7 @@ final class TaskExperienceContext {
     private static final Pattern ADVICE = Pattern.compile(
             "\\n参考经验 [0-9a-f-]{36}；来源任务 [0-9a-f-]{36}；匹配原因：.*仅供参考，仍须遵守当前目标、守卫和独立验收。", Pattern.DOTALL);
 
-    static void refresh(Path root, TaskStore store, TaskRecord task, PrintStream out) throws IOException {
+    static void refresh(Path root, TaskStore store, TaskRecord task, PrintStream out, boolean includeSharedExperiences) throws IOException {
         requireVisibleLegacyHistory(root, task);
         for (int i = 0; i < task.checkpoint.messages.size(); i++) {
             var message = task.checkpoint.messages.get(i);
@@ -32,7 +32,8 @@ final class TaskExperienceContext {
             var evidence = store.readEvidence(task, task.checks.get(i));
             if (!"FAILED".equals(evidence.verdict())) { break; }
             task.experienceFailures.add(CoreError.key(evidence.details()));
-            try { advice = new ExperienceLibrary(root).adviceFor(evidence.details(), task.files, task.experienceAdviceIds, out); }
+            try { advice = new ExperienceLibrary(root).adviceFor(evidence.details(), task.files, task.experienceAdviceIds,
+                    out, includeSharedExperiences); }
             catch (IOException unavailable) { out.println("[经验] 当前经验不可用，继续独立修复与验收"); }
             break;
         }

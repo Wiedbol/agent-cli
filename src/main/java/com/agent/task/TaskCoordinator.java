@@ -15,6 +15,7 @@ import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /** 真实失败驱动修复，显式恢复可靠边界，验收判定独立于模型声明。 */
 public final class TaskCoordinator {
@@ -26,7 +27,9 @@ public final class TaskCoordinator {
     }
     private final ControllerFactory controllerFactory;
     private final PrintStream out;
+    private final Consumer<String> answer;
     private final com.agent.skill.SkillKnowledge knowledge;
+    private final boolean includeSharedExperiences;
 
     public TaskCoordinator(Path root, CommandRunner runner,
                            ControllerFactory controllerFactory, PrintStream out) {
@@ -35,11 +38,25 @@ public final class TaskCoordinator {
 
     public TaskCoordinator(Path root, CommandRunner runner, ControllerFactory controllerFactory,
                            PrintStream out, com.agent.skill.SkillKnowledge knowledge) {
+        this(root, runner, controllerFactory, out, knowledge, true);
+    }
+
+    public TaskCoordinator(Path root, CommandRunner runner, ControllerFactory controllerFactory,
+                           PrintStream out, com.agent.skill.SkillKnowledge knowledge, boolean includeSharedExperiences) {
+        this(root, runner, controllerFactory, out, knowledge, includeSharedExperiences,
+                message -> out.println("Agent > " + message));
+    }
+
+    public TaskCoordinator(Path root, CommandRunner runner, ControllerFactory controllerFactory,
+                           PrintStream out, com.agent.skill.SkillKnowledge knowledge, boolean includeSharedExperiences,
+                           Consumer<String> answer) {
         this.root = root;
         this.runner = runner;
         this.controllerFactory = controllerFactory;
         this.out = out;
         this.knowledge = knowledge;
+        this.includeSharedExperiences = includeSharedExperiences;
+        this.answer = answer;
     }
 
     public TaskRecord start(String goal, String command) throws IOException, InterruptedException {
@@ -136,7 +153,7 @@ public final class TaskCoordinator {
             TaskProtection protection = new TaskProtection(project, task.acceptanceFiles, () -> task.files);
             protection.check();
             if (task.state == TaskRecord.State.Verified) { return task; }
-            if (resumed) { TaskExperienceContext.refresh(project, store, task, out); }
+            if (resumed) { TaskExperienceContext.refresh(project, store, task, out, includeSharedExperiences); }
             Path sessions = SessionPaths.defaultDir(project);
             Files.createDirectories(sessions);
             WorkspaceSnapshot.requireInside(project, sessions);
@@ -183,7 +200,7 @@ public final class TaskCoordinator {
                         try { result = controller.runTaskResult(task.checkpoint.feedback, progress); }
                         catch (TaskProgress.Recheck repeated) { result = null; }
                         if (result != null) {
-                            out.println("Agent > " + result.answer());
+                            answer.accept(result.answer());
                             if (result.reason() != ControllerRole.StopReason.COMPLETED || result.answer().isBlank()) {
                                 return pause(store, task, result.answer().isBlank() ? "模型没有给出完成声明" : result.answer(), progress);
                             }
@@ -232,7 +249,8 @@ public final class TaskCoordinator {
         String key = CoreError.key(evidence.details());
         if (task.experienceFailures.contains(key)) { return ""; }
         task.experienceFailures.add(key);
-        try { return new com.agent.experience.ExperienceLibrary(root).adviceFor(evidence.details(), evidence.files(), task.experienceAdviceIds, out); }
+        try { return new com.agent.experience.ExperienceLibrary(root).adviceFor(evidence.details(), evidence.files(),
+                task.experienceAdviceIds, out, includeSharedExperiences); }
         catch (IOException invalid) { out.println("经验不可用，继续独立修复与验收"); return ""; }
     }
 

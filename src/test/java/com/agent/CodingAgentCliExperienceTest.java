@@ -259,8 +259,8 @@ class CodingAgentCliExperienceTest {
     }
     private CommandRunner acceptance() {
         return (dir, command, timeout) -> {
-            boolean fixed = Files.readString(source()).equals("fixed");
-            Path reports = Files.createDirectories(root.resolve("target/surefire-reports"));
+            boolean fixed = Files.readString(dir.resolve("src/main/java/App.java")).equals("fixed");
+            Path reports = Files.createDirectories(dir.resolve("target/surefire-reports"));
             Files.writeString(reports.resolve("TEST-AppTest.xml"), "<testsuite tests=\"1\" failures=\""
                     + (fixed ? 0 : 1) + "\" errors=\"0\" skipped=\"0\"><testcase classname=\"AppTest\" name=\"checks\">"
                     + (fixed ? "" : "<failure message=\"expected fixed\"/>") + "</testcase></testsuite>");
@@ -280,6 +280,52 @@ class CodingAgentCliExperienceTest {
         return match.group(1);
     }
 
+    @Test void shouldOfferExperienceForOrdinaryTaskInChatAndRequireExactConfirmation() throws Exception {
+        Files.writeString(root.resolve("pom.xml"), "<project/>");
+        Files.createDirectories(source().getParent());
+        Files.writeString(source(), "broken");
+        var chat = new FakeLLMClient(List.of(new LLMResponse("第一轮", null, 1, 1),
+                new LLMResponse("第二轮", null, 1, 1)));
+        var managed = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("repair",
+                new ToolCall.Function("write_file", "{\"path\":\"src/main/java/App.java\",\"content\":\"fixed\"}"))), 1, 1),
+                new LLMResponse("请验收", null, 1, 1), new LLMResponse(ADVICE, null, 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var input = new BufferedReader(new StringReader("开始聊天\n/task 修复边界\n/extract-experience\ny\n继续聊天\nexit\n"));
+        var repl = new CodingAgentCli(root, chat, true, 4, input, stream, stream, null, acceptance());
+
+        assertEquals(0, repl.runRepl(null, null, managed, true), text());
+        assertEquals(3, managed.callCount(), text());
+        assertEquals(2, chat.callCount(), text());
+        var task = new com.agent.task.TaskStore(root).list().get(0);
+        assertEquals(com.agent.task.KnowledgeMode.EXPERIENCE, task.knowledgeMode);
+        assertEquals("mvn test", task.command);
+        assertTrue(managed.requests().get(2).get(0).content().contains("修复边界"), text());
+        assertTrue(text().contains("请输入 save ") && text().contains("未明确确认，未保存"), text());
+        assertTrue(chat.requests().get(1).toString().contains("第一轮"));
+        assertTrue(new com.agent.experience.ExperienceLibrary(root).list().isEmpty());
+    }
+
+    @Test void shouldSaveExperienceFromResumedTaskAndAllowExplicitSourceInChat() throws Exception {
+        String taskId = task(false);
+        output.reset();
+        var chat = new FakeLLMClient(List.of(new LLMResponse("继续", null, 1, 1)));
+        var managed = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 1, 1), new LLMResponse(ADVICE, null, 1, 1)));
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var input = new BufferedReader(new StringReader("/extract-experience\n/resume-task " + taskId
+                + "\n/extract-experience\nsave " + taskId + "\nclear\n/extract-experience\n/extract-experience "
+                + taskId + "\nn\n继续聊天\nexit\n"));
+        var repl = new CodingAgentCli(root, chat, false, 4, input, stream, stream, null, acceptance());
+
+        assertEquals(0, repl.runRepl(null, null, managed, true), text());
+        assertEquals(2, managed.callCount(), text());
+        assertEquals(1, chat.callCount(), text());
+        assertEquals(2, Pattern.compile("本次聊天暂无当前任务").matcher(text()).results().count(), text());
+        var experiences = new com.agent.experience.ExperienceLibrary(root).list();
+        assertEquals(1, experiences.size(), text());
+        assertEquals(taskId, experiences.get(0).sourceTask());
+        assertTrue(text().contains("已保存经验") && text().contains("未明确确认，未保存"), text());
+    }
+
     @Test void shouldApproveSourcedExperienceAndManageItAfterRebuildingCli() throws Exception {
         String task = task(false);
         var model = new FakeLLMClient(List.of(new LLMResponse(ADVICE, null, 2, 3)));
@@ -291,7 +337,13 @@ class CodingAgentCliExperienceTest {
         var match = Pattern.compile("经验: ([0-9a-f-]{36})").matcher(text());
         assertTrue(match.find(), text());
         String experience = match.group(1);
-        assertEquals(0, cli(null, "").showExperience(experience), text());
+        assertTrue(text().replace("\r\n", "\n").startsWith("经验: " + experience + "\n  范围: 本项目\n  启用: true\n"), text());
+        output.reset();
+        var reader = new FakeLLMClient(List.of());
+        assertEquals(0, cli(reader, "/experiences\n/experience " + experience + "\nexit\n").runRepl(), text());
+        assertEquals(0, reader.callCount());
+        assertEquals(2, Pattern.compile("经验: " + experience).matcher(text()).results().count(), text());
+        assertTrue(text().replace("\r\n", "\n").contains("\n经验: " + experience + "\n  范围: 本项目"), text());
         assertTrue(text().contains(task), text());
         assertTrue(text().contains("repair"), text());
         assertTrue(text().contains("AppTest#checks"), text());
@@ -301,6 +353,98 @@ class CodingAgentCliExperienceTest {
         assertTrue(text().contains("启用: false"), text());
         assertEquals(0, cli(null, "").showTask(task));
         assertTrue(text().contains("状态: Verified"), text());
+    }
+
+    @Test void shouldUseSharedExperienceForOnePlainChatInEmptyDirectory(@TempDir Path environment) throws Exception {
+        Path home = Files.createDirectory(environment.resolve("home"));
+        Path scratch = Files.createDirectory(environment.resolve("scratch"));
+        String originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        try {
+            String id = approve(task(false));
+            new com.agent.experience.ExperienceLibrary(root).share(id);
+            var create = new ToolCall("create", new ToolCall.Function("write_file",
+                    "{\"path\":\"hello.py\",\"content\":\"print('Hello, world!')\"}"));
+            var model = new FakeLLMClient(List.of(new LLMResponse(null, List.of(create), 1, 1),
+                    new LLMResponse("已创建程序", null, 1, 1), new LLMResponse("收到", null, 1, 1)));
+            var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+            var input = new BufferedReader(new StringReader(
+                    "/experiences\n/use-experience " + id.substring(0, 8) + " 创建一个 Python 程序\n继续普通聊天\nexit\n"));
+            var dir = com.agent.session.SessionPaths.defaultDir(scratch);
+            var sessions = com.agent.session.SessionStore.start(dir, com.agent.session.SessionStore.Mode.NEW, "plain");
+            var repl = new CodingAgentCli(scratch, model, true, 4, input, stream, stream, sessions,
+                    (dirPath, command, timeout) -> { throw new AssertionError("普通聊天不应自行运行验收"); });
+
+            assertEquals(0, repl.runRepl(null, null, model, false), text());
+            assertEquals("print('Hello, world!')", Files.readString(scratch.resolve("hello.py")));
+            assertTrue(text().contains("本轮参考经验: " + id), text());
+            assertTrue(text().contains("短 ID: " + id.substring(0, 8)), text());
+            assertTrue(model.requests().get(0).toString().contains(id));
+            assertTrue(model.requests().get(1).toString().contains(id));
+            assertFalse(model.requests().get(2).toString().contains(id));
+            assertFalse(sessions.loadMessages().messages().toString().contains(id));
+            assertFalse(Files.exists(scratch.resolve(".agent/tasks")));
+        } finally {
+            System.setProperty("user.home", originalHome);
+        }
+    }
+
+    @Test void shouldShareOneVerifiedExperienceAndRemoveItFromAnotherProjectsResume(@TempDir Path environment) throws Exception {
+        String oldHome = System.getProperty("user.home");
+        Path home = Files.createDirectory(environment.resolve("home"));
+        Path other = Files.createDirectory(environment.resolve("consumer"));
+        System.setProperty("user.home", home.toString());
+        try {
+            String sourceTask = task(false);
+            String id = approve(sourceTask);
+            var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+            var emptyInput = new BufferedReader(new StringReader(""));
+            var consumer = new CodingAgentCli(other, null, true, 12, emptyInput, stream, stream, null, acceptance());
+            assertEquals(4, consumer.showExperience(id), text());
+            var ownerModel = new FakeLLMClient(List.of());
+            assertEquals(0, cli(ownerModel, "/share-experience " + id + "\nexit\n").runRepl(), text());
+            assertEquals(0, ownerModel.callCount());
+            assertEquals(0, consumer.showExperience(id), text());
+            assertEquals(0, consumer.listExperiences(), text());
+            assertTrue(text().contains("范围: 已共享") && text().contains("来源可用: true"), text());
+            assertFalse(Files.exists(other.resolve(".agent/experiences/" + id + ".json")));
+            assertEquals(4, consumer.updateExperienceSharing(id, false), text());
+            var lookup = new com.agent.experience.ExperienceLibrary(other);
+            assertTrue(lookup.adviceFor("unrelated HTTP timeout", java.util.Map.of(), new java.util.ArrayList<>(), stream).isEmpty());
+
+            Files.writeString(other.resolve("pom.xml"), "<project/>");
+            Path target = other.resolve("src/main/java/App.java");
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, "broken");
+            var frozen = new FakeLLMClient(List.of(new LLMResponse("请验收", null, 1, 1)));
+            var evaluation = new CodingAgentCli(other, frozen, true, 1, emptyInput, stream, stream, null, acceptance());
+            assertEquals(1, evaluation.startFrozenExperienceTask("冻结对照", null, true), text());
+            assertFalse(frozen.requests().toString().contains(id));
+
+            var first = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("read",
+                    new ToolCall.Function("read_file", "{\"path\":\"src/main/java/App.java\"}"))), 1, 1)));
+            var limited = new CodingAgentCli(other, first, true, 1, emptyInput, stream, stream, null, acceptance());
+            assertEquals(1, limited.startManagedTask("共享经验恢复", null), text());
+            assertTrue(first.requests().toString().contains("参考经验 " + id), text());
+            var task = new com.agent.task.TaskStore(other).list().stream()
+                    .filter(saved -> saved.goal.equals("共享经验恢复")).findFirst().orElseThrow();
+            assertEquals(0, cli(ownerModel, "/unshare-experience " + id + "\nexit\n").runRepl(), text());
+            assertEquals(4, consumer.showExperience(id), text());
+            assertEquals(0, cli(null, "").showExperience(id), text());
+            assertEquals(0, consumer.raiseTaskBudget(task.id, 3), text());
+            var resumed = new FakeLLMClient(List.of(new LLMResponse(null, List.of(new ToolCall("fix",
+                    new ToolCall.Function("write_file", "{\"path\":\"src/main/java/App.java\",\"content\":\"fixed\"}"))), 1, 1),
+                    new LLMResponse("请验收", null, 1, 1)));
+            var resume = new CodingAgentCli(other, resumed, true, 12, emptyInput, stream, stream, null, acceptance());
+            assertEquals(0, resume.resumeManagedTask(task.id, false), text());
+            assertFalse(resumed.requests().toString().contains("参考经验 " + id));
+
+            assertEquals(0, cli(null, "").updateExperienceSharing(id, true), text());
+            assertEquals(0, cli(null, "").disableExperience(id), text());
+            assertEquals(4, consumer.showExperience(id), text());
+        } finally {
+            System.setProperty("user.home", oldHome);
+        }
     }
 
     @ParameterizedTest @ValueSource(strings = {"no-failure", "stale", "unverified", "missing-repair", "wrong-call", "wrong-failure", "corrupt-evidence"})

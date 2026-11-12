@@ -13,9 +13,9 @@ import java.nio.charset.UnsupportedCharsetException;
 /**
  * 统一处理命令行程序的字符编码问题（stdin 解码与 stdout / stderr 编码）。
  *
- * <p><b>问题背景</b>：JDK 18 起 {@code file.encoding} 固定为 UTF-8，但 JDK 19 起
- * {@code System.in} / {@code System.out} 使用 {@code stdin.encoding} / {@code stdout.encoding}
- * （Windows 上等于控制台代码页，简体中文环境通常是 GBK）。于是会出现两种典型故障：
+ * <p><b>问题背景</b>：JDK 18 起 {@code file.encoding} 默认是 UTF-8，标准流编码仍取决于控制台。
+ * 新版 JDK 通过 {@code stdin.encoding}、{@code stdout.encoding} 和 {@code stderr.encoding}
+ * 报告各流的编码。Windows 控制台的实际代码页可能与系统默认编码不同，于是会出现两种典型故障：
  *
  * <ul>
  *   <li><b>输入乱码</b>：{@code new InputStreamReader(System.in)} 使用默认的 UTF-8 去解码
@@ -24,15 +24,15 @@ import java.nio.charset.UnsupportedCharsetException;
  *       Windows Terminal、VS Code）按 UTF-8 解码。</li>
  * </ul>
  *
- * <p>只要「写出的字节编码」与「对端的解码方式」不一致就会出问题，因此固定任何一种编码都不行。
- * 本类的策略是：<b>默认不做任何猜测，直接采用 JVM 探测到的编码</b>（{@code stdin.encoding} /
- * {@code stdout.encoding}，JDK 19+ 由控制台代码页或平台编码决定），只在需要时显式覆盖：
+ * <p>只要「写出的字节编码」与「对端的解码方式」不一致就会出问题。默认采用 JVM 探测到的编码，
+ * 接收端有明确编码要求时可以显式覆盖。
  *
  * <ol>
  *   <li>{@code -Dagent.encoding=UTF-8}（或 {@code GBK} 等）显式指定，优先级最高；</li>
  *   <li>否则使用 JVM 探测到的 {@code stdin.encoding} / {@code stdout.encoding}
  *       —— 中文 Windows 上通常是 GBK，UTF-8 终端或 macOS / Linux 上是 UTF-8；</li>
- *   <li>探测不到时（如较早的 JDK）回退到 {@code native.encoding}，再回退 UTF-8。</li>
+ *   <li>探测不到时（如较早的 JDK）使用交互控制台的编码，避免把 Windows 系统编码误当作当前代码页；
+ *       没有交互控制台时回退到 {@code native.encoding}，最后回退 UTF-8。</li>
  * </ol>
  *
  * <p>为什么不自己猜测终端类型？因为「输出被重定向 / 由 IDE 捕获」并不等价于「对端按 UTF-8 解码」：
@@ -67,14 +67,14 @@ public final class ConsoleStreams {
     public static Charset stdinCharset() {
         return charset(System.getProperty(ENCODING_PROPERTY),
                 System.getProperty("stdin.encoding"),
-                nativeCharset());
+                consoleOrNativeCharset());
     }
 
     /** 写出标准输出时应使用的编码。 */
     public static Charset stdoutCharset() {
         return charset(System.getProperty(ENCODING_PROPERTY),
                 System.getProperty("stdout.encoding"),
-                nativeCharset());
+                consoleOrNativeCharset());
     }
 
     /**
@@ -86,7 +86,7 @@ public final class ConsoleStreams {
     public static Charset stderrCharset() {
         return charset(System.getProperty(ENCODING_PROPERTY),
                 System.getProperty("stderr.encoding"),
-                nativeCharset());
+                consoleOrNativeCharset());
     }
 
     /**
@@ -136,8 +136,11 @@ public final class ConsoleStreams {
         return charset;
     }
 
-    /** 平台默认编码：JDK 17+ 的 {@code native.encoding}，取不到时用 UTF-8。 */
-    private static Charset nativeCharset() {
+    /** 较早的 JDK 未报告标准流编码时，交互控制台仍能提供当前代码页。 */
+    private static Charset consoleOrNativeCharset() {
+        if (hasInteractiveConsole()) {
+            return System.console().charset();
+        }
         Charset nativeCharset = resolve(System.getProperty("native.encoding"));
         return nativeCharset == null ? StandardCharsets.UTF_8 : nativeCharset;
     }

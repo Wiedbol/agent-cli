@@ -1,5 +1,6 @@
 package com.agent.experience;
 
+import com.agent.ConsoleList;
 import com.agent.llm.LLMClient;
 import com.agent.llm.Message;
 import com.agent.session.Redactor;
@@ -160,35 +161,95 @@ public final class ExperienceLibrary {
         }
     }
 
+    public record Visible(Experience experience, boolean shared) { }
+
+    public void share(String id) throws IOException {
+        try (var writer = tasks.lock()) {
+            Experience experience = read(id);
+            if (!experience.enabled() || !sourceValid(experience)) {
+                throw new IOException("只可共享启用且来源有效的本项目经验");
+            }
+            new SharedExperiences().share(id, root);
+        }
+    }
+
+    public boolean unshare(String id) throws IOException {
+        try (var writer = tasks.lock()) {
+            return new SharedExperiences().unshare(id, root);
+        }
+    }
+
+    public List<Visible> visible(PrintStream out) throws IOException {
+        var shared = new LinkedHashMap<String, Experience>();
+        for (var experience : sharedAvailable(out)) { shared.put(experience.id(), experience); }
+        var values = new ArrayList<Visible>();
+        for (var local : list()) { values.add(new Visible(local, local.equals(shared.remove(local.id())))); }
+        shared.values().forEach(experience -> values.add(new Visible(experience, true)));
+        return List.copyOf(values);
+    }
+
+    public Visible readVisible(String id) throws IOException {
+        Experience local;
+        try { local = read(id); }
+        catch (NoSuchFileException missing) { return new Visible(new SharedExperiences().read(id), true); }
+        try { return new Visible(local, local.equals(new SharedExperiences().read(id))); }
+        catch (IOException unavailable) { return new Visible(local, false); }
+    }
+
+    private List<Experience> sharedAvailable(PrintStream out) {
+        try { return new SharedExperiences().available(); }
+        catch (IOException unavailable) {
+            out.println("[经验] 共享索引不可用，继续使用本项目经验");
+            return List.of();
+        }
+    }
+
     /** 检索中的坏记录只排除自身，不应阻断当前任务的独立修复。 */
     public String adviceFor(String failure, Map<String, String> files, List<String> alreadySelected, PrintStream out) throws IOException {
+        return adviceFor(failure, files, alreadySelected, out, true);
+    }
+
+    public String adviceFor(String failure, Map<String, String> files, List<String> alreadySelected, PrintStream out,
+                            boolean includeShared) throws IOException {
         checkPath(directory);
-        if (!Files.isDirectory(directory)) { return ""; }
         var candidates = new ArrayList<Experience>();
-        try (var paths = Files.list(directory)) {
-            for (Path path : paths.filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList()) {
-                try {
-                    var experience = read(path.getFileName().toString().replaceFirst("\\.json$", ""));
-                    if (alreadySelected.contains(experience.id()) || !experience.enabled() || !sourceValid(experience)) { continue; }
-                    candidates.add(experience);
-                } catch (IOException invalid) { /* 损坏或跨项目记录不能作为建议。 */ }
+        if (Files.isDirectory(directory)) {
+            try (var paths = Files.list(directory)) {
+                for (Path path : paths.filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList()) {
+                    try {
+                        var experience = read(path.getFileName().toString().replaceFirst("\\.json$", ""));
+                        if (alreadySelected.contains(experience.id()) || !experience.enabled() || !sourceValid(experience)) { continue; }
+                        candidates.add(experience);
+                    } catch (IOException invalid) { /* 损坏或跨项目记录不能作为建议。 */ }
+                }
             }
         }
-        return adviceFromValidated(candidates, failure, files, alreadySelected, out);
+        if (includeShared) {
+            var localIds = candidates.stream().map(Experience::id).collect(java.util.stream.Collectors.toSet());
+            sharedAvailable(out).stream().filter(value -> !localIds.contains(value.id())).forEach(candidates::add);
+        }
+        return adviceFromValidated(candidates, failure, files, alreadySelected, out, project());
     }
 
     /** 可信评测控制层冻结后复用同一选择规则；调用者负责冻结前的来源核验。 */
     public static String adviceFromValidated(List<Experience> candidates, String failure, Map<String, String> files,
                                              List<String> alreadySelected, PrintStream out) {
+        return adviceFromValidated(candidates, failure, files, alreadySelected, out, null);
+    }
+
+    private static String adviceFromValidated(List<Experience> candidates, String failure, Map<String, String> files,
+                                              List<String> alreadySelected, PrintStream out, String project) {
         record Match(Experience experience, int score, String reason) { }
         var matches = new ArrayList<Match>();
         for (var experience : candidates) {
             if (alreadySelected.contains(experience.id()) || !experience.enabled()) { continue; }
             var modules = new TreeSet<String>();
-            experience.repairs().forEach(repair -> repair.changes().keySet().forEach(file -> {
-                int src = file.indexOf("src/");
-                if (src >= 0) { modules.add(file.substring(0, src)); }
-            }));
+            if (project == null || project.equals(experience.project())) {
+                experience.repairs().forEach(repair -> repair.changes().keySet().forEach(file -> {
+                    int src = file.indexOf("src/");
+                    if (src >= 0) { modules.add(file.substring(0, src)); }
+                }));
+            }
             if (!modules.isEmpty() && modules.stream().noneMatch(module -> files.keySet().stream()
                     .anyMatch(file -> file.startsWith(module + "src/")))) { continue; }
             String context = (failure + " " + String.join(" ", files.keySet())).toLowerCase(Locale.ROOT);
@@ -231,6 +292,9 @@ public final class ExperienceLibrary {
                     + "；匹配原因：" + match.reason()
                     + "\n适用条件：" + experience.advice().conditions() + "\n建议：" + experience.advice().recommendation()
                     + "\n不适用：" + experience.advice().limitations() + "\n仅供参考，仍须遵守当前目标、守卫和独立验收。";
+            if (project != null && !project.equals(experience.project())) {
+                out.println("[经验] 共享来源项目: " + experience.project());
+            }
             out.println(entry);
             context.append(entry);
         }
@@ -283,18 +347,50 @@ public final class ExperienceLibrary {
     }
 
     public void print(Experience experience, PrintStream out) {
-        out.println("经验: " + experience.id() + "\n启用: " + experience.enabled() + "\n所属项目: " + experience.project()
+        print(experience, sourceValid(experience), out);
+    }
+
+    public void print(Visible visible, PrintStream out) {
+        out.println(scope(visible));
+        print(visible.experience(), visible.shared() || sourceValid(visible.experience()), out);
+    }
+
+    public void printList(List<Visible> experiences, PrintStream out) {
+        var list = new ConsoleList(out, true);
+        for (var visible : experiences) {
+            var experience = visible.experience();
+            list.heading("经验: " + experience.id());
+            list.detail(scope(visible) + "\n" + details(experience, visible.shared() || sourceValid(experience)));
+        }
+    }
+
+    public void print(Experience experience, ConsoleList output) {
+        output.detail("经验: " + experience.id() + "\n" + details(experience, sourceValid(experience)));
+    }
+
+    private static String scope(Visible visible) { return "范围: " + (visible.shared() ? "已共享" : "本项目"); }
+
+    private void print(Experience experience, boolean sourceAvailable, PrintStream out) {
+        out.println("经验: " + experience.id() + "\n" + details(experience, sourceAvailable));
+    }
+
+    private static String details(Experience experience, boolean sourceAvailable) {
+        return "启用: " + experience.enabled() + "\n所属项目: " + experience.project()
+                + "\n短 ID: " + experience.id().substring(0, 8)
                 + "\n来源任务: " + experience.sourceTask() + "\n验收版本: " + experience.acceptanceVersion()
                 + "\n初始失败: " + experience.baseline() + "\n最终验收: " + experience.verification()
                 + "\n修复调用: " + experience.repairs() + "\n确认时间: " + experience.confirmedAt()
-                + "\n来源可用: " + sourceValid(experience) + "\n适用条件: " + experience.advice().conditions()
+                + "\n来源可用: " + sourceAvailable + "\n适用条件: " + experience.advice().conditions()
                 + "\n错误特征: " + experience.advice().errorFeatures() + "\n处理建议: " + experience.advice().recommendation()
-                + "\n不适用情形: " + experience.advice().limitations());
+                + "\n不适用情形: " + experience.advice().limitations();
     }
 
     private String project() { return projectIdentity; }
-    private Path path(String id) throws IOException {
+    static void requireId(String id) throws IOException {
         if (id == null || !id.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) { throw new IOException("经验标识不合法"); }
+    }
+    private Path path(String id) throws IOException {
+        requireId(id);
         Path file = directory.resolve(id + ".json");
         checkPath(file);
         return file;

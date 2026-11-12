@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,6 +54,29 @@ class WriteFileToolTest {
         run("{\"path\":\"a.txt\",\"content\":\"新内容\"}");
 
         assertEquals("新内容", Files.readString(root.resolve("a.txt")));
+    }
+
+    @Test
+    void shouldNeverReplaceAFileThatAppearedAfterCreateApproval() throws Exception {
+        var args = MAPPER.readTree("{\"path\":\"src/new.txt\",\"content\":\"first\"}");
+        var request = new ToolRequest(root, args);
+        assertTrue(tool.createNew(request).success());
+
+        assertThrows(FileAlreadyExistsException.class, () -> tool.createNew(request));
+        assertEquals("first", Files.readString(root.resolve("src/new.txt")));
+    }
+
+    @Test
+    void shouldRejectAutomaticCreationThroughALink(@TempDir Path outside) throws Exception {
+        try {
+            Files.createSymbolicLink(root.resolve("link"), outside);
+        } catch (UnsupportedOperationException | IOException unavailable) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "当前环境不支持创建符号链接");
+        }
+        var args = MAPPER.readTree("{\"path\":\"link/nested/new.txt\",\"content\":\"content\"}");
+
+        assertThrows(SecurityException.class, () -> tool.createNew(new ToolRequest(root, args)));
+        assertTrue(Files.notExists(outside.resolve("nested")));
     }
 
     @Test

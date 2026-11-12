@@ -41,6 +41,12 @@ public final class ProcessCommandRunner implements CommandRunner {
     @Override
     public CommandResult run(Path workingDirectory, String command, long timeoutSeconds)
             throws IOException, InterruptedException {
+        return runDirect(workingDirectory, shellCommand(command), timeoutSeconds);
+    }
+
+    @Override
+    public CommandResult runDirect(Path workingDirectory, List<String> invocation, long timeoutSeconds)
+            throws IOException, InterruptedException {
         if (timeoutSeconds <= 0) {
             throw new IllegalArgumentException("timeoutSeconds 必须为正数: " + timeoutSeconds);
         }
@@ -50,7 +56,7 @@ public final class ProcessCommandRunner implements CommandRunner {
                 : Files.createTempFile(outputDirectory, "agent-command-", ".log");
         Process process = null;
         try {
-            ProcessBuilder builder = new ProcessBuilder(shellCommand(command));
+            ProcessBuilder builder = new ProcessBuilder(invocation);
             builder.directory(workingDirectory.toAbsolutePath().normalize().toFile());
             builder.redirectErrorStream(true);
             builder.redirectOutput(outputFile.toFile());

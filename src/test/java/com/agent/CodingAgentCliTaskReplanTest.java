@@ -62,7 +62,10 @@ class CodingAgentCliTaskReplanTest {
         String task = pausedRead();
         Files.writeString(source(), "human-fixed // keep my changes");
         assertEquals(0, cli(null, "", 12).raiseTaskBudget(task, 3));
-        assertEquals(1, cli(null, "replan " + task + "\n", 12).replanTask(task, true), text());
+        var chat = new FakeLLMClient(List.of());
+        assertEquals(0, cli(chat, "/replan-task " + task + "\nreplan " + task + "\nexit\n", 12)
+                .runRepl(null, null, chat, true), text());
+        assertEquals(0, chat.callCount());
         assertEquals("human-fixed // keep my changes", Files.readString(source()));
         assertTrue(text().contains("REPLAN"), text());
         var model = new FakeLLMClient(List.of(new LLMResponse("请验收", null, 1, 1)));

@@ -130,7 +130,7 @@ public final class EvaluationRunner {
                     return commands.run(dir, command, config.commandTimeoutSeconds());
                 };
                 var cli = new CodingAgentCli(root, model, true, config.requests(), new BufferedReader(new StringReader("")), log, log, null, restricted);
-                exit = cli.startManagedTask(scenario.goal(), config.acceptance(), false, run.experiencesEnabled());
+                exit = cli.startFrozenExperienceTask(scenario.goal(), config.acceptance(), run.experiencesEnabled());
                 var tasks = new TaskStore(root).list();
                 if (!tasks.isEmpty()) {
                     var task = tasks.get(0);

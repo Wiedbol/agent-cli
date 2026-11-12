@@ -1,7 +1,9 @@
 package com.agent.tool;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
@@ -49,17 +51,30 @@ public class WriteFileTool implements Tool {
 
     @Override
     public ToolResult execute(ToolRequest request) throws Exception {
+        return write(request, false);
+    }
+
+    /** 自动批准仅授权新建，目标在审批后出现时也不得覆盖。 */
+    public ToolResult createNew(ToolRequest request) throws IOException {
+        return write(request, true);
+    }
+
+    private ToolResult write(ToolRequest request, boolean createOnly) throws IOException {
         long start = System.nanoTime();
         Path file = request.resolvePath("path");
         String content = request.requireString("content");
         boolean append = Boolean.parseBoolean(request.optionalString("append", "false"));
 
         Path parent = file.getParent();
+        if (createOnly) { requireProjectParent(request.root(), parent); }
         if (parent != null) {
             Files.createDirectories(parent);
         }
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        if (append) {
+        if (createOnly) {
+            requireProjectParent(request.root(), parent);
+            Files.write(file, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        } else if (append) {
             Files.write(file, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } else {
             Files.write(file, bytes, StandardOpenOption.CREATE,
@@ -71,6 +86,20 @@ public class WriteFileTool implements Tool {
         return ToolResult.ok(name(),
                 "已" + action + " " + bytes.length + " 字节到 " + relative,
                 elapsedMillis(start));
+    }
+
+    private void requireProjectParent(Path root, Path parent) throws IOException {
+        if (parent == null || !parent.startsWith(root)) {
+            throw new SecurityException("新文件的父目录必须位于项目内");
+        }
+        Path existing = parent;
+        while (!existing.equals(root) && Files.notExists(existing, LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+        }
+        Path expected = root.toRealPath().resolve(root.relativize(existing));
+        if (!existing.toRealPath().equals(expected) || !existing.equals(root) && Files.isSymbolicLink(existing)) {
+            throw new SecurityException("新文件路径包含链接或越出实际项目根目录");
+        }
     }
 
     private static long elapsedMillis(long startNanos) {

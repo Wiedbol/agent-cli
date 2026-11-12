@@ -45,7 +45,7 @@ public final class SkillEvaluation {
         public JsonNode counterexample;
     }
     public static final class Report {
-        public int schemaVersion = 1;
+        public int schemaVersion = 2;
         public String kind, freezeSha256;
         public Freeze frozen;
         public List<Cell> cells = new ArrayList<>();
@@ -64,7 +64,7 @@ public final class SkillEvaluation {
             checkFrozen(frozen);
             Files.createDirectory(config.archive());
             var report = new Report(); report.kind = config.simulated() ? "SIMULATED" : "REAL EXPLORATORY";
-            report.frozen = frozen; report.freezeSha256 = SkillStore.digest(frozen); report.preparation = frozen.preparation();
+            report.frozen = frozen; report.freezeSha256 = reportDigest(frozen, report.schemaVersion); report.preparation = frozen.preparation();
             for (var run : frozen.order()) {
                 var cell = new Cell(); cell.run = run; cell.counterexample = manifest(frozen.catalog(), run.scenario()).path("exclusion");
                 report.cells.add(cell);
@@ -373,7 +373,8 @@ public final class SkillEvaluation {
         var formal = report.attempts.stream().map(a -> new Cost("formal", a.id, 1, a.promptTokens == null ? 0 : a.promptTokens,
                 a.completionTokens == null ? 0 : a.completionTokens, a.promptTokens == null || a.completionTokens == null ? 1 : 0)).toList();
         report.formalCost = totals(formal); var whole = new ArrayList<>(report.preparation); whole.addAll(formal); report.wholeProcessCost = totals(whole);
-        var wrapper = SkillStore.JSON.createObjectNode(); wrapper.set("value", SkillStore.JSON.valueToTree(report)); wrapper.put("sha256", SkillStore.digest(report));
+        var wrapper = SkillStore.JSON.createObjectNode(); wrapper.set("value", SkillStore.JSON.valueToTree(report));
+        wrapper.put("sha256", reportDigest(report, report.schemaVersion));
         Path archive = SkillTrials.canonical(report.frozen.config().archive()), temporary = archive.resolve("report.tmp");
         if (Files.exists(temporary, LinkOption.NOFOLLOW_LINKS)) { SkillTrials.canonical(temporary); }
         try (var channel = java.nio.channels.FileChannel.open(temporary, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
@@ -382,11 +383,31 @@ public final class SkillEvaluation {
         }
         Files.move(temporary, archive.resolve("report.json"), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
+    /** JSON 对象键顺序不承载业务含义；数组顺序仍参与摘要，保留正式运行次序。 */
+    private static String reportDigest(Object value, int schemaVersion) throws IOException {
+        if (schemaVersion == 1) { return SkillStore.digest(value); }
+        return SkillStore.digest(ordered(SkillStore.JSON.valueToTree(value)));
+    }
+    private static JsonNode ordered(JsonNode value) {
+        if (value.isObject()) {
+            var result = SkillStore.JSON.createObjectNode();
+            var names = new TreeSet<String>(); value.fieldNames().forEachRemaining(names::add);
+            for (String name : names) { result.set(name, ordered(value.get(name))); }
+            return result;
+        }
+        if (value.isArray()) {
+            var result = SkillStore.JSON.createArrayNode();
+            value.forEach(item -> result.add(ordered(item)));
+            return result;
+        }
+        return value;
+    }
     public static Report read(Path archive) throws IOException {
         SkillTrials.canonical(archive); var wrapper = SkillTrials.read(archive.resolve("report.json"));
         var report = SkillStore.JSON.treeToValue(wrapper.path("value"), Report.class);
-        if (report == null || report.schemaVersion != 1 || report.frozen == null || !SkillStore.digest(report).equals(wrapper.path("sha256").asText())
-                || !SkillStore.digest(report.frozen).equals(report.freezeSha256) || !archive.equals(report.frozen.config().archive())
+        if (report == null || report.schemaVersion != 1 && report.schemaVersion != 2 || report.frozen == null
+                || !reportDigest(report, report.schemaVersion).equals(wrapper.path("sha256").asText())
+                || !reportDigest(report.frozen, report.schemaVersion).equals(report.freezeSha256) || !archive.equals(report.frozen.config().archive())
                 || !report.frozen.order().equals(report.cells.stream().map(c -> c.run).toList())
                 || report.attempts.size() > report.frozen.config().batchRequests()) { throw new IOException("评测报告冻结或完整性校验失败"); }
         for (var attempt : report.attempts) { SkillRequests.validate(attempt.payload); }

@@ -15,6 +15,7 @@ from fixtures import CASES, EXCLUSION, STAGES
 
 HOME = Path(__file__).resolve().parent.parent
 REPO = HOME.parent.parent
+MANIFEST = HOME / 'MANIFEST.json'
 VERSION = 'repair-lab-2'
 SOURCE = 'src/main/java/demo/BusinessRules.java'
 TEST = 'src/test/java/demo/BusinessRulesTest.java'
@@ -59,7 +60,7 @@ def metadata(case):
 
 def describe():
     catalog = {'version': VERSION, 'stages': STAGES, 'cases': [metadata(case) for case in CASES]}
-    if catalog != json.loads((HOME / 'MANIFEST.json').read_text(encoding='utf-8')):
+    if catalog != json.loads(MANIFEST.read_text(encoding='utf-8')):
         raise ValueError('Fixture inputs no longer match the frozen version manifest')
     return catalog
 
@@ -203,7 +204,7 @@ def verify(output):
         with tempfile.TemporaryDirectory(prefix='repair-lab-v2-verify-') as folder:
             base = Path(folder).resolve()
             root, archive = base / 'workspace', base / 'control'
-            initialize(root, archive, 'source-delivery')
+            initialize(root, archive, STAGES['source'][0])
             identity = (root / MARKER).read_bytes()
             for index, case in enumerate(CASES):
                 if index:

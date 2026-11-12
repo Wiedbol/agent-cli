@@ -1,0 +1,109 @@
+{
+  "version": "repair-lab-2",
+  "stages": {
+    "source": [
+      "source-console"
+    ],
+    "initial-development": [
+      "dev-stderr-encoding",
+      "dev-report-encoding"
+    ],
+    "feedback-development": [],
+    "required-regression": [
+      "dev-stderr-encoding",
+      "dev-report-encoding"
+    ],
+    "formal": []
+  },
+  "cases": [
+    {
+      "id": "source-console",
+      "kind": "source",
+      "goal": "修复 Java CLI 启动提示乱码：默认输出应跟随控制台接收端的编码，显式指定输出编码时应保持覆盖。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "d9de664b651ea516b3e11fa8b0eb485ab2d81a205fa98370fc90aeca69a02d9b",
+        "src/test/java/demo/BusinessRulesTest.java": "2997db0cd08747f222b57441232b7d94255196f8fe978ecb5ed29151bf021375",
+        "GOAL.md": "ba0062c1bcf9884e9e2adeae988918a38890a609f9bf42c944bfdb020e1f7ff4"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "2997db0cd08747f222b57441232b7d94255196f8fe978ecb5ed29151bf021375"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldDisplayStartupInGbkConsole",
+        "shouldDisplayStartupInUtf8Console",
+        "shouldPreserveExplicitOutputOverride"
+      ],
+      "expectedFailures": [
+        "shouldDisplayStartupInGbkConsole"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": null
+    },
+    {
+      "id": "dev-stderr-encoding",
+      "kind": "related",
+      "goal": "修复 Java CLI 错误提示乱码：标准输出和标准错误可接到不同编码的终端，错误提示须按自己的接收端正确显示。保留冻结验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "9f63b5782d0b4117a8331c62b73452f46db489c22b02169b1febd6333f06b7e5",
+        "src/test/java/demo/BusinessRulesTest.java": "5c52e64fb29e528c743428d6e759c390080727fe1d4dafea482370f1faa471b3",
+        "GOAL.md": "1bd8137a7fa6c1216cefae222144aea4e8a3f51922b161dc8089f9e199af1ae4"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "5c52e64fb29e528c743428d6e759c390080727fe1d4dafea482370f1faa471b3"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldDisplayGbkErrorWithUtf8Stdout",
+        "shouldDisplayUtf8ErrorWithGbkStdout",
+        "shouldDisplayErrorWhenEncodingsAgree"
+      ],
+      "expectedFailures": [
+        "shouldDisplayGbkErrorWithUtf8Stdout",
+        "shouldDisplayUtf8ErrorWithGbkStdout"
+      ],
+      "exclusion": null,
+      "rejectedShortcutFailures": null
+    },
+    {
+      "id": "dev-report-encoding",
+      "kind": "exclusion",
+      "goal": "修复 Java CLI 读入 UTF-8 报告后的中文乱码。报告约定为 UTF-8，终端状态提示仍应跟随当前接收端编码。保留冻结验收。",
+      "initial": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/main/java/demo/BusinessRules.java": "46e888aad6cccc9be036942b95e10594b978743864185a4a4a14930b39d4d7af",
+        "src/test/java/demo/BusinessRulesTest.java": "b0f25b41bb356d6c0c6dc55c7200505031646e3812d18b6a1c0daa2154f4b80c",
+        "GOAL.md": "7406e743f83e8cbdc65bea153b05c0d1e9422036670419ed0772d7c5c0318f24"
+      },
+      "acceptance": {
+        "pom.xml": "6b62a6c241bb7461803e03906365302366ae4924b57251ca3d1bdb3da3854dfd",
+        "src/test/java/demo/BusinessRulesTest.java": "b0f25b41bb356d6c0c6dc55c7200505031646e3812d18b6a1c0daa2154f4b80c"
+      },
+      "command": "mvn test",
+      "tests": [
+        "shouldReadUtf8ReportInGbkConsole",
+        "shouldReadUtf8ReportInUtf8Console",
+        "shouldKeepGbkConsoleStatus",
+        "shouldKeepUtf8ConsoleStatus"
+      ],
+      "expectedFailures": [
+        "shouldReadUtf8ReportInGbkConsole"
+      ],
+      "exclusion": {
+        "wrongStep": "把 statusBytes 的终端输出硬改为 UTF-8，用调整终端输出编码替代报告输入解码。",
+        "rejectionEvidence": "明确指出错误发生在 UTF-8 报告的输入解码边界，拒绝改终端输出编码或启动参数。",
+        "normalRepairEvidence": "使用报告约定的 UTF-8 解码字节，保留按当前接收端编码的状态输出，冻结验收全部通过。",
+        "observableConstraint": "shouldKeepGbkConsoleStatus",
+        "wrongFailures": [
+          "shouldKeepGbkConsoleStatus",
+          "shouldReadUtf8ReportInGbkConsole"
+        ]
+      },
+      "rejectedShortcutFailures": null
+    }
+  ]
+}

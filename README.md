@@ -12,7 +12,9 @@
 - **失败经验**：提炼、确认、查看和禁用有来源的修复经验；失败时检索最多三条相关建议，恢复时重新检查有效性。
 - **聊天记录**：保存和恢复普通会话，支持具名会话与 Markdown 导出。
 
-## 环境要求
+## 示例与验收记录
+
+修复技能闭环已完成验收。2026 年 11 月 10 日的最终离线回归通过 643 项测试。六次真实技能对照使用 31 次请求，独立验收 v1 为 3/3、v2 为 2/3，任务 Verified 分别为 3/3 和 1/3。本轮未观察到 v2 改善。[真实对照报告](https://github.com/Wiedbol/agent-cli/issues/29#issuecomment-6608228342) · [集成验收记录](https://github.com/Wiedbol/agent-cli/issues/17#issuecomment-6761428941)
 
 需要可重复的修复练习时，可使用[独立示例项目 Repair Lab](examples/repair-lab/README.md)，其中提供固定测试、外部工作区初始化和本地验证命令。
 
@@ -23,6 +25,8 @@
 课程展示与复核可使用[演示交付包](demo/README.md)，含九分钟脚本、真实终端录制备份、课程报告和离线打包检查；[真实对照结果](examples/repair-lab/results/2026-10-23/README.md)单独说明已观察结果与局限。
 
 修复技能的完整本机 HTTP/JAR 复核、实际终端审核、阶段清单和真实调用前预算模板见[修复技能离线交付指引](demo/repair-skills/README.md)。该流程标记为 SIMULATED，不自动启动真实模型实验。
+
+## 环境要求
 
 | 组件 | 要求 |
 |---|---|
@@ -39,13 +43,12 @@
 ### 获取并构建
 
 ```powershell
-git clone https://github.com/Wiedbol/agent-cli.git
+git clone --branch codex/repair-skill-evolution https://github.com/Wiedbol/agent-cli.git
 cd agent-cli
-mvn -B clean test
 mvn -B '-DskipTests' package
 ```
 
-生成含依赖的可执行文件：`target/agent-cli-0.1.0.jar`。运行时需要 Java，无需额外安装项目的依赖库；被操作项目的构建工具仍需单独准备。
+生成含依赖的可执行文件：`target/agent-cli-0.1.0.jar`。运行时需要 Java，无需额外安装项目的依赖库；被操作项目的构建工具仍需单独准备。开发时用 `mvn -B '-Dtest=RelevantTest' test` 运行受影响的测试类，发布或集成验收时执行 `mvn -B clean test`。
 
 ### 配置模型
 
@@ -63,24 +66,24 @@ DEEPSEEK_API_KEY=替换为你的API Key
 
 读取顺序为当前工作目录的 `.env` 优先、环境变量兜底。`--root` 指定操作目录，不改变 `.env` 的查找位置。请勿提交包含真实密钥的 `.env`。
 
-默认模型为 `deepseek-chat`。如需指定其他支持工具调用的兼容模型，可以设置 `DEEPSEEK_MODEL`，或在 `-jar` 前传入 `'-Dagent.deepseek.model=模型名称'`。系统属性优先于模型环境变量。
+代码默认模型标识为 `deepseek-chat`。本项目的真实技能对照使用 `deepseek-flash`，可通过 `$env:DEEPSEEK_MODEL = 'deepseek-flash'` 显式选择。客户端对该模型关闭思考模式。也可以在 `-jar` 前传入 `'-Dagent.deepseek.model=deepseek-flash'`，系统属性优先于环境变量。[DeepSeek 模型列表](https://api-docs.deepseek.com/quick_start/pricing/)
 
 ### 启动
 
 ```powershell
 $agentJar = (Resolve-Path '.\target\agent-cli-0.1.0.jar').Path
 $projectRoot = 'E:/your-maven-project'
-java '-Dagent.encoding=UTF-8' -jar $agentJar --root $projectRoot
+java -jar $agentJar --root $projectRoot
 ```
 
 进入后直接输入目标，例如“阅读项目，解释订单金额的计算逻辑”。`exit` 或 `quit` 退出，`clear` 清空对话并开始新会话。
 
-本文后续示例沿用 `$agentJar` 和 `$projectRoot`，尖括号中的任务ID、操作ID等是占位符，运行时请替换为实际值。PowerShell 中的 `-D...` 参数应加引号，并放在 `-jar` 前。中文乱码时请确认终端支持 UTF-8；确需使用 GBK 控制台时可指定 `'-Dagent.encoding=GBK'`。
+本文后续示例沿用 `$agentJar` 和 `$projectRoot`，尖括号中的任务ID、操作ID等是占位符，运行时请替换为实际值。直接在终端启动时由 JVM 检测控制台编码。显式指定编码时，接收端必须用相同编码。例如 Windows 的代码页 `936` 可用 `'-Dagent.encoding=GBK'`。PowerShell 中的 `-D...` 参数应加引号，并放在 `-jar` 前。
 
 无需模型时可检查本地输入输出模式：
 
 ```powershell
-java '-Dagent.encoding=UTF-8' -jar $agentJar --local
+java -jar $agentJar --local
 ```
 
 本地模式只进行输入响应，不执行智能编程任务。未配置 Key 时，普通聊天会进入本地模式；管理任务不会因此降级为成功。
@@ -130,6 +133,10 @@ java -jar $agentJar --root $projectRoot --skill-batches
 
 只接受一至十条不重复、已确认且启用、来源证据有效的同项目经验；程序独立检查真实失败、修复意图与结果、文件版本链及最终验收。候选列出适用与不适用条件、诊断、修复和验证流程，绑定来源摘要并标记迁移能力未验证。相同建议独立保存，不自动合并。结构化记录与可审阅 Markdown 位于项目 `.agent/skills/`；改写内容或来源会使查询报损坏或不可用。
 
+聊天中可把技能命令的主选项改成同名斜杠命令，其余参数原样填写。例如 `/start-skill-batch --request-limit 1`、`/generate-skill 经验ID --skill-batch 批次ID`、`/skill-candidate 候选ID`。输入 `/help` 可查看完整技能命令。含空格的路径和审核说明可用单引号或双引号括起。
+
+在来源项目的聊天里，也可以直接输入 `/make-skill <经验ID>`。支持短 ID 和逗号分隔的多个 ID。程序核验已确认经验后，为这次制作创建一次请求的额度，生成并展示待审核候选。候选经过试用、核验和人工批准后，才会出现在 `/skills`。
+
 每次显式生成最多请求一次模型。发送前预留并保存累计消耗，失败、无效响应和中断后结果未知的请求均占额度；用量未返回时显示未知，不能当作零。额度耗尽暂停，重启不清零，也不自动重试或提高额度。可显式新建批次，旧账本保留。查询与批次创建无需 Key；只有生成需要 Key。
 
 生成时可同时加 `--revise-skill '已发布版本ID' --revision-reason '修订原因'`，绑定同项目可用父版本和原内容摘要；缺少已发布版本时拒绝生成。生成候选本身不会启用；`--yes` 不适用于技能命令。
@@ -137,6 +144,8 @@ java -jar $agentJar --root $projectRoot --skill-batches
 ### 指定候选的隔离开发试用
 
 候选只在显式试用中可加载，不对普通 SKILL 任务启用。先在 [Lab v2](examples/repair-lab-v2/README.md) 来源阶段完成修复、确认经验、生成候选和有剩余额度的批次，再用控制器 `reset` 准备开发样例。来源现场连同候选、其他知识及旧批次账本被保存在控制根的 `history/<ID>/workspace`；当前工作根保持干净。
+
+也可在聊天中执行 `/trial-skill`、`/resume-skill-trial`、`/skill-review`、`/attest-skill-trial` 和 `/approve-skill`，沿用下列参数和确认语句。聊天保留在单独目录，通过 `--root` 指定干净的 Lab 工作区。两轮开发试用之间由控制器归档并准备下一例。
 
 以下是操作者显式启动入口，生成和试用的模型请求均需要事先批准对应批次额度；本仓库离线测试使用替身：
 
@@ -154,13 +163,21 @@ java -jar $agentJar --root E:/repair-v2-work --skill-trial '试用ID' --trial-co
 
 路径须规范、绝对且相互隔离。只接受冻结清单中的初始开发、反馈开发或必要回归输入，拒绝正式场景、旧 `.agent`、构建产物、输入变动或不足的批次额度。归档核验沿原项目身份检查真实任务、失败、修复意图/结果、文件版本链和验收，不能仅凭有效标志加载知识。来源归档的任务/经验视图禁止写入；可信控制层可在核验项目身份后写入技能候选、审核、版本和批次元数据。
 
-独立失败基线可用后，指定候选的精简目录进入原任务反馈。Agent 可不选，或调用 `load_skill`，用目录中的 ID 与完整 SHA-256 快照版本取得完整流程；错误 ID/版本、任意路径、重复全文加载被拒绝或去重。读取后可用 `declare_skill` 声明 ACCEPT/REJECT 和原因；未读取、读取但未声明、声明采纳、声明拒绝分别记录。模型声明不能代替实际操作或独立验收。
+独立失败基线可用后，指定候选的精简目录进入原任务反馈。显式开发试用要求 Agent 先用 `load_skill` 审阅指定候选，再用 `declare_skill` 声明 ACCEPT 或 REJECT 及原因。加载须使用目录中的 ID 与完整 SHA-256 摘要。普通管理任务和正式对照仍由 Agent 自主选读。系统分别记录未加载、加载未声明、采纳和拒绝。模型声明不能代替实际操作或独立验收。
 
 试用沿用现有守卫、文件工具和独立验收，只允许冻结的 `mvn test` 命令，写入测试/构建配置、目标及项目标记受保护。它在限定根中自动确认普通业务写入；命令限制依赖可信样例，不提供操作系统沙箱。
 
+试用命令工具会显示冻结命令及提交完成后的独立验收方式。非冻结命令在启动进程前被拒绝，操作记录可供审核。只有模型已声明完成且最终独立验收通过，未执行且无副作用的命令拒绝才退出活动错误计数。持续违规和实际执行失败仍受重复失败保护。
+
 每次最终消息/工具组装后，先保存批次预留、请求摘要、候选关联与脱敏消息，再发送。试用任务上限不得超过批次剩余额度，失败和结果不明请求仍占额度，未知 token 明确标记。HTTP 请求体禁止自动重发，同一试用允许多次分别预留的请求。查询无需 Key，展示目录/加载/声明事件、工具结果、验收、完整请求审计及任务和批次消耗；详细证据在控制根 `skill-trials/<ID>/`。
 
-来源、候选、身份或冻结输入失效会暂停；必要审计保存失败停止后续操作。进程中断后可查看已保存预留与未知结果，查询不会重发。当前版本不自动恢复试用；普通 `--resume-task` 和 `--task-budget` 也不能绕过试用绑定。试用成功仅代表该开发任务通过验收，候选仍未启用、迁移能力仍未获批准。
+来源、候选、身份或冻结输入失效会暂停；必要审计保存失败停止后续操作。进程中断后可查看已保存预留与未知结果，查询不会重发。仅因预算耗尽暂停、现场与冻结配置一致且没有未知副作用的试用，可显式续做同一试用并保留原暂停快照。下面的 8 是新的累计上限。普通任务恢复和扩额命令无法替代此入口。
+
+```powershell
+java -jar $agentJar --root E:/repair-v2-work --resume-skill-trial '试用ID' --trial-control E:/repair-v2-control --trial-max-steps 8 --review-note '核对现场后批准续做'
+```
+
+试用成功仅代表该开发任务通过验收，候选仍未启用、迁移能力仍未获批准。
 
 知识前提在最终回复和验收完成后仍会核对。结果归档完整校验后一次发布；归档未完成时，查询仍可展示当前任务的已保存状态与未知请求，不把部分复制当作最终完成。
 
@@ -174,6 +191,66 @@ java -jar $agentJar --root $projectRoot --export latest
 ```
 
 默认保存到操作项目的 `.agent/sessions/`，可用 `--session-dir user` 保存到用户目录的 `.agent-cli/sessions/`，或用 `--session-dir <路径>` 指定其他目录。默认最近聊天不会选中管理任务会话；显式选择或导出任务会话仍可查看交流记录。导出的Markdown写入标准输出，可在命令末尾加 `> conversation.md` 保存到文件。
+
+在 `用户 >` 提示符输入 `/skill <修复目标>`，即可在同一个终端发起技能任务。例如输入 `/skill 修复积分达到门槛仍未获得资格的问题`。任务使用当前项目的已发布技能、默认验收命令 `mvn test` 和启动时的 `--max-steps`。基线失败后，Agent 根据技能目录决定是否加载。任务结束或暂停后返回原聊天提示符，技能任务的验收与调用记录可用输出中的任务 ID 查询。
+
+| 聊天命令 | 用途 |
+|---|---|
+| `/help` | 显示完整聊天命令列表 |
+| `/approval [files\|project\|manual]` | 查看审批模式，或在聊天内切换文件、可信项目、人工审批 |
+| `/use-experience <经验ID> <需求>` | 让普通聊天参考一条本地或共享经验 |
+| `/use-skill <版本ID> <需求>` | 让普通聊天参考一个本地或共享的已发布技能版本 |
+| `/make-skill <经验ID[,经验ID…]>` | 在来源项目从已确认经验生成待审核候选，最多 1 次模型请求 |
+| `/trace` | 展开当前聊天最近一次执行的角色日志 |
+| `/task [--chat] <需求>` | 在无 `pom.xml` 的目录中走普通聊天，在 Maven 项目中默认发起管理修复。`--chat` 明确走普通聊天 |
+| `/skill <修复目标>` | 发起技能修复任务 |
+| `/tasks` | 查看当前项目的任务及状态 |
+| `/status <任务ID>` | 查看任务的验收、暂停原因和技能调用记录 |
+| `/task-budget <任务ID> <新总上限>` | 提高暂停任务的累计请求上限 |
+| `/resume-task <任务ID>` | 沿用该任务已保存的检查点、技能版本和累计请求上限继续执行 |
+| `/replan-task <任务ID>` | 检查人工修改，确认后按当前项目文件重新规划 |
+| `/reagree-acceptance <任务ID> <验收命令>` | 审核并确认新的验收命令 |
+| `/retry-operation <任务ID> <操作ID>` | 审核并批准重试指定的结果不明操作 |
+| `/abandon-task <任务ID>` | 确认放弃任务，保留现有项目文件 |
+| `/skills` | 查看本项目和当前用户可用的共享技能版本 |
+| `/skill-info <版本ID>` | 查看指定版本的指南、适用范围和批准记录 |
+| `/share-skill <版本ID>` | 在原项目逐个共享已批准、启用的技能版本 |
+| `/unshare-skill <版本ID>` | 在原项目取消该版本的共享 |
+| `/extract-experience [任务ID]` | 从当前任务或指定任务提炼经验，确认后保存 |
+| `/experiences` | 列出本项目经验及可用的共享经验 |
+| `/experience <经验ID>` | 查看经验详情、适用范围及来源 |
+| `/share-experience <经验ID>` | 在原项目逐条共享经验 |
+| `/unshare-experience <经验ID>` | 在原项目取消共享 |
+| `/sessions` | 列出当前会话目录的记录，并标记当前会话 |
+| `/switch <会话ID>` | 切换到指定的普通聊天会话并恢复上下文 |
+| `/export [会话ID]` | 将当前或指定会话导出为 Markdown，打印文件路径 |
+| `/new` 或 `clear` | 开始新会话，保留旧记录 |
+| `exit` 或 `quit` | 退出聊天 |
+
+在空目录或非 Maven 项目中，可直接输入 `/task 创建一个 hello.py 并运行`。需求和回复保存在当前聊天，可接着追问。Maven 项目中也可输入 `/task --chat <需求>`，例如尚未编写测试时先让 Agent 搭建程序。
+
+管理修复入口是 Maven 项目中的 `/task <修复目标>` 和 `/skill <修复目标>`，默认使用 `mvn test` 验收，并沿用启动时的 `--max-steps`。任务处置需要按终端提示输入完整确认语句。重新规划、更换验收命令或批准重试后，可用 `/resume-task <任务ID>` 继续。
+
+聊天默认收起控制员、守卫和执行员的过程日志，直接显示模型回复、人工确认提示及改动预览。管理任务结束后会显示独立验收结果或暂停原因。输入 `/trace` 可查看本次运行中当前聊天最近一次执行的过程，无需调用模型。切换或新建会话后，这份临时过程记录会清空。
+
+从零开发时，可先用 `/experiences` 或 `/skills` 查 ID，再在普通聊天输入 `/use-experience <经验ID> 创建一个输出中文的程序` 或 `/use-skill <版本ID> 创建一个输出中文的程序`。空目录、单文件程序和任意语言项目都可使用，程序会校验条目的来源、启用状态和显式文件前提。参考内容只附在本轮模型请求，开发和运行仍按聊天中的文件权限与命令审批执行。
+
+这两个使用命令支持唯一的 ID 前缀。列表会显示完整 ID 和前 8 位短 ID，例如 `/use-skill d2c8347b 创建一个输出中文的程序`。如果同一个前缀匹配多个条目，可多输入几位。
+
+共享技能按版本授权，发布新版后可单独决定是否共享。归档版本在原项目启动聊天时指定 `--skill-control` 和 `--skill-source`，再用 `/share-skill`。同一用户的其他项目正常启动聊天后即可查询共享来源。索引在用户目录的 `.agent-cli/shared-skills/`，查询和加载都会复核原库的批准记录与版本摘要。普通 `/skill` 任务有可用的基线失败后，按当前项目的文件前提提供候选摘要，由 Agent 判断是否加载。取消共享、停用或来源失效后，新任务会排除该版本；已加载该版本且未完成的跨项目任务在再次检查时暂停。
+
+`/sessions` 显示完整会话 ID。`/switch` 和 `/export` 支持包含空格的 ID，任务会话可通过 `/export <会话ID>` 查阅。聊天内导出的 UTF-8 Markdown 保存在当前会话目录，每次导出生成独立文件。会话查询、切换和导出均无需调用模型。
+
+请求额度耗尽时，可先用 `/status <任务ID>` 查看原总上限和累计消耗，再用 `/task-budget <任务ID> <新总上限>` 调整。新值是累计总上限，须大于原上限。确认调整结果后，用 `/resume-task <任务ID>` 继续。
+
+管理修复返回后，可输入 `/extract-experience` 提炼当前任务的经验。程序先核验初始失败、修复动作和有效的独立验收，再调用模型生成建议。核对建议后，输入提示中的完整 `save <任务ID>` 即可保存。刚启动、切换或新建会话后，可以用 `/extract-experience <任务ID>` 显式选择来源。
+
+使用归档技能库时，在启动聊天的命令中指定同项目的控制目录和来源归档工作区：
+
+```powershell
+java -jar $agentJar --root $projectRoot `
+  --skill-control $control --skill-source $sourceArchive --max-steps 8
+```
 
 ## 执行与验收任务
 
@@ -189,7 +266,7 @@ java -jar $agentJar --root $projectRoot --task '修复金额计算的边界错�
 java -jar $agentJar --root $projectRoot --task '修复金额计算' --accept-command 'mvn -q test' --max-steps 20
 ```
 
-`--max-steps` 在管理任务中表示整个任务的累计模型请求额度，默认 12；恢复和验收失败都不会重置。API 请求失败仍占用预留次数，未知 token 用量不会按已知零值统计。
+`--max-steps` 默认 30。普通聊天按每轮用户请求计数，管理任务按整个任务累计。恢复时沿用已保存的额度，验收失败也不会重置计数。API 请求失败仍占用预留次数，未知 token 用量不会按已知零值统计。
 
 自定义验收命令也必须生成根目录 `target/surefire-reports/TEST-*.xml` 中的当前测试报告。程序检查测试身份、执行数、失败、错误、跳过及输入版本；退出码为零或模型声明成功均不足以通过。缺少可用报告、零测试、跳过或遗漏必需测试、验收期间输入变化均不能得到 `Verified`。
 
@@ -264,11 +341,11 @@ java -jar $agentJar --root E:/repair-v2-work --task-budget '任务ID' --max-step
 java -jar $agentJar --root E:/repair-v2-work --resume-task '任务ID'
 ```
 
-这两项技能库参数只用于新建 SKILL 任务；恢复读取原检查点，不能用命令行换库或切换知识模式。不提供时检查项目本地技能库，空库也可正常独立修复。归档仍须匹配真实项目和来源身份，不能跨目录复制元数据冒用。
+这两项技能库参数用于新建 SKILL 任务，也可在启动聊天时为 `/skill` 指定归档库。恢复沿用原任务检查点中的技能库和知识模式。不提供时检查项目本地技能库，空库也可正常独立修复。归档须匹配真实项目和来源身份。
 
-只有真实、可用的失败验收才触发发现；通过的基线或基础设施故障不会给出目录。程序先核对批准状态、来源及显式文件/SHA-256 条件，再以目标和失败信息中的关键词确定性排序，最多展示三项摘要、适用限制和匹配理由。不把来源文件名相同当作迁移硬要求。文本匹配是启发式筛选，不能保证理解全部自然语言适用条件；`requires: 路径`/`必须存在: 路径` 和完整文件摘要按实际快照严格核对。
+只有真实、可用的失败验收才触发发现；通过的基线或基础设施故障不会给出目录。程序先核对批准状态、来源及显式文件/SHA-256 条件，再按技能 ID 的稳定顺序展示全部合格默认版本的标题、适用范围、排除条件和首个来源案例摘要。Agent 在已有决策请求中结合目标与失败证据判断是否选读，不增加专门的匹配模型请求。`requires: 路径`/`必须存在: 路径` 和完整文件摘要仍按实际快照严格核对。目录按每个字段最多 240 个字符展示，技能数量增加会增加上下文用量。
 
-Agent 可不加载，或按目录中的**技能 ID / 固定版本 ID**调用同一个 `load_skill` 工具，全文只作为工具结果进入对话。普通任务不能加载未批准候选、任意路径或未提供的版本。`declare_skill` 单独记录 ACCEPT/REJECT 与理由；未加载、已加载但未声明、声明采纳、声明拒绝分别可查。后续验收失败可发现尚未使用的相关技能，同任务最多加载三种技能，已有可靠读取结果不会重复加入全文。
+Agent 可不加载并继续独立修复，或按目录中的**技能 ID / 固定版本 ID**调用同一个 `load_skill` 工具，全文只作为工具结果进入对话。目录列出只表示资格检查通过，适用性仍须判断。普通任务不能加载未批准候选、任意路径或未提供的版本。`declare_skill` 单独记录 ACCEPT/REJECT 与理由；未加载、已加载但未声明、声明采纳、声明拒绝分别可查。后续验收失败可再次提供尚未读取的合格技能，同任务最多加载三种技能，已有可靠读取结果不会重复加入全文。
 
 任务固定实际读取的版本、版本/候选/指南摘要；新发布只影响后续任务，不替换进行中任务的内容。恢复沿用固定内容、原请求额度与操作游标，不重放已完成写入。查询无需 Key，不运行模型或验收，展示目录/加载/声明事实、实际操作、独立验收及最终组装的消息与工具审计。
 
@@ -313,7 +390,19 @@ Lab 输入必须提供 `--feedback-catalog`，核对实际初始文件与冻结�
 
 ## 审批与异常处理
 
-普通写入、命令操作可能要求确认。可信任务可加 `--yes` 跳过这些普通审批，但它不能批准下列独立决定。非交互运行遇到必须人工确认的情况会暂停，不等待管道输入。
+只读工具通过路径检查后直接执行。聊天中输入 `/approval files`，可免确认新建项目文件和通过版本校验的 `replace_text`。整文件覆盖、追加已有文件和 Agent 发起的 `run_command` 仍逐次确认。
+
+对于可信项目，在聊天中输入 `/approval project`，还可自动批准符合限定格式的命令，例如 `javac Echo.java`、`java Echo.java`、`python hello.py`、`python -m unittest`、`python -m pytest` 和 `mvn test`。Java 源文件、运行目标与 `pom.xml` 必须位于项目内，所用程序必须从项目目录外解析。命令串联、管道、重定向、安装软件、Git 写操作、整文件覆盖、追加已有文件和其他未识别操作仍需确认。守卫已禁止的操作会直接拒绝。
+
+项目模式会以 Agent 所在账户的权限执行项目代码与构建脚本，请只在信任这些内容时启用。输入 `/approval` 查看当前模式，输入 `/approval manual` 恢复人工确认。切换对本次运行后续的聊天、管理任务和任务恢复生效。
+
+也可以在启动时直接开启文件自动批准：
+
+```powershell
+java -jar $agentJar --root $projectRoot --auto-approve-files
+```
+
+可信任务可单独使用 `--yes` 跳过普通工具审批。下列独立决定仍需按提示确认。非交互运行遇到必须人工确认的管理任务操作会暂停。
 
 | 情况 | 命令 | 必须在交互终端完整输入 |
 |---|---|---|
@@ -339,11 +428,15 @@ java -jar $agentJar --root $projectRoot --extract-experience <来源任务ID>
 java -jar $agentJar --root $projectRoot --experiences
 java -jar $agentJar --root $projectRoot --experience <经验ID>
 java -jar $agentJar --root $projectRoot --disable-experience <经验ID>
+java -jar $agentJar --root $projectRoot --share-experience <经验ID>
+java -jar $agentJar --root $projectRoot --unshare-experience <经验ID>
 ```
 
 提炼需要模型 Key 和交互终端；不会在任务结束后自动提炼或保存。拒绝保存不影响任务成功。列出、查看和禁用无需模型配置；禁用保留历史记录。
 
-新失败出现时，程序从同项目已确认、启用且来源有效的经验中确定性匹配，最多选择三条并去重，显示匹配原因与来源。无匹配时正常继续。匹配采用错误指纹、关键词和模块启发式，不保证理解任意自然语言条件；明确文件前提可写为 `requires: module/src/main/java/App.java` 或 `必须存在: module/src/main/java/App.java`，按实际文件快照核对。
+在原项目执行 `/share-experience <经验ID>` 后，同一用户的其他项目可以通过 `/experiences` 和 `/experience <经验ID>` 查看这条经验。用户目录的 `.agent-cli/shared-experiences/` 保存原项目路径和经验 ID，读取时核对原项目记录和验收证据。原项目取消共享、禁用经验或来源不可用时，其他项目停止采用这条建议。
+
+新失败出现时，普通经验模式从本项目及可用的共享经验中确定性匹配，最多选择三条并去重，显示匹配原因与来源。无匹配时正常继续。匹配采用错误指纹和关键词，同项目经验还会检查原模块路径。共享经验的显式文件前提按当前项目的文件快照核对，可写为 `requires: module/src/main/java/App.java` 或 `必须存在: module/src/main/java/App.java`。
 
 恢复任务时撤下旧经验块并重新核查，禁用、损坏、来源缺失或不适用的建议不会继续作为经验注入。经验只供参考，不执行历史 Diff，不修改当前目标、守卫或验收约定。
 
@@ -372,7 +465,7 @@ java -jar $agentJar --root $projectRoot --task '修复金额计算' --no-experie
 
 ## 冻结技能版本的六格对照
 
-已有经过审核的初始 v1 和基于其开发使用反馈修订的 v2 后，可使用独立入口 `com.agent.evaluation.SkillEvaluationMain`。旧 `EvaluationMain` 的十八次经验对照协议保持原样。新入口先冻结同一技能的两个批准版本、来源/开发证据、三个正式输入、模型配置和交错顺序，默认各版本每场景一次；`repeats` 可显式设为 1–100。没有合格 v2 会拒绝准备，不自动生成或选取版本。
+已有经过审核的初始 v1 和基于合格开发反馈修订的 v2 后，可使用独立入口 `com.agent.evaluation.SkillEvaluationMain`。旧 `EvaluationMain` 的十八次经验对照协议保持原样。新入口先冻结同一技能的两个批准版本、来源/开发证据、三个正式输入、模型配置和交错顺序，默认各版本每场景一次；`repeats` 可显式设为 1–100。合格反馈可以是匹配父版本的 USE，也可以是父版本批准后独立确认的 SOURCE。SOURCE 记录新任务的已验证修复，父版本的使用情况单独记录。
 
 外部配置示例（替换路径和 UUID；输入集合为 `{场景ID: {"goal": "...", "files": {"相对路径": "原始内容"}}}`，必须与清单中三个正式场景的摘要完全一致）：
 
@@ -396,9 +489,9 @@ java -jar $agentJar --root $projectRoot --task '修复金额计算' --no-experie
 
 ```powershell
 # 本机 HTTP 替身模拟；不读取 Key，不允许远程模拟端点
-java '-Dagent.encoding=UTF-8' -cp target/agent-cli-0.1.0.jar com.agent.evaluation.SkillEvaluationMain --simulate E:/repair-workspace E:/repair-materials/config.json
+java -cp target/agent-cli-0.1.0.jar com.agent.evaluation.SkillEvaluationMain --simulate E:/repair-workspace E:/repair-materials/config.json
 # 只读检查；不调用模型、验收或修改账本
-java '-Dagent.encoding=UTF-8' -cp target/agent-cli-0.1.0.jar com.agent.evaluation.SkillEvaluationMain --report E:/repair-results-new
+java -cp target/agent-cli-0.1.0.jar com.agent.evaluation.SkillEvaluationMain --report E:/repair-results-new
 ```
 
 工作根必须是同项目的独立规范 Repair Lab v2 工作区；输出归档必须不存在，与工作根和来源控制目录分离且同文件系统。旧现场和每格结果分别保留在 `preparation-root`、`run-N`，全部请求的发送前预留、实际消息/工具审计及检查结果保留在 `report.json`。模型只经普通目录和 `load_skill` 读取当前固定版本，不能访问外部答案、来源、另一版本或上一格记录；只允许运行冻结的 `mvn test`，保护验收、身份和目标输入。冻结内容变化会阻断后续格。

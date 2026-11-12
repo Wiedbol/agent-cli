@@ -302,9 +302,12 @@ class CodingAgentCliTaskResumeTest {
         assertEquals(0, cli(model, acceptance(), 12).startManagedTask("检查", null), text());
         String task = id();
         PrintStream stream = new PrintStream(output, true, StandardCharsets.UTF_8);
-        var agreement = new CodingAgentCli(root, null, false, 12,
-                new BufferedReader(new StringReader("approve " + task + "\n")), stream, stream, null, acceptance());
-        assertEquals(1, agreement.reagreeAcceptance(task, "mvn verify", true), text());
+        var chat = new FakeLLMClient(List.of());
+        var agreement = new CodingAgentCli(root, chat, false, 12,
+                new BufferedReader(new StringReader("/reagree-acceptance " + task + " mvn verify\napprove " + task + "\nexit\n")),
+                stream, stream, null, acceptance());
+        assertEquals(0, agreement.runRepl(null, null, chat, true), text());
+        assertEquals(0, chat.callCount());
         var resumed = new FakeLLMClient(List.of(new LLMResponse("重新验收", null, 1, 1)));
         assertEquals(0, cli(resumed, acceptance(), 12).resumeManagedTask(task), text());
         assertTrue(text().contains("验收: mvn verify"), text());
@@ -352,16 +355,20 @@ class CodingAgentCliTaskResumeTest {
     }
 
     @Test void shouldKeepErrorRoundsAcrossRestartsAndBudgetIncreases() throws Exception {
+        Files.writeString(root.resolve("src/main/java/Other.java"), "class Other {}");
         String task = pausedRead();
-        assertEquals(0, cli(null, acceptance(), 12).raiseTaskBudget(task, 2));
-        var read = new ToolCall("read-two", new ToolCall.Function("read_file", "{\"path\":\"pom.xml\"}"));
-        assertEquals(1, cli(new FakeLLMClient(List.of(new LLMResponse(null, List.of(read), 1, 1))), acceptance(), 12)
-                .resumeManagedTask(task), text());
-        assertEquals(0, cli(null, acceptance(), 12).raiseTaskBudget(task, 3));
-        var third = new FakeLLMClient(List.of(new LLMResponse(null, List.of(read), 1, 1)));
-        assertEquals(1, cli(third, acceptance(), 12).resumeManagedTask(task), text());
+        // 首次源码读取已在暂停前发生；恢复后即便读取另一份源码也不能重新豁免。
+        for (int budget = 2; budget <= 4; budget++) {
+            assertEquals(0, cli(null, acceptance(), 12).raiseTaskBudget(task, budget));
+            output.reset();
+            var read = new ToolCall("read-" + budget, new ToolCall.Function("read_file", "{\"path\":\"src/main/java/Other.java\"}"));
+            var resumed = new FakeLLMClient(List.of(new LLMResponse(null, List.of(read), 1, 1)));
+            assertEquals(1, cli(resumed, acceptance(), 12).resumeManagedTask(task), text());
+            assertEquals(1, resumed.callCount());
+            if (budget < 4) { assertFalse(text().contains("同一核心错误持续三个决策轮次"), text()); }
+        }
         assertTrue(text().contains("同一核心错误持续三个决策轮次"), text());
-        assertTrue(text().contains("模型请求: 3/3"), text());
+        assertTrue(text().contains("模型请求: 4/4"), text());
         LLMClient forbidden = (messages, tools) -> { throw new AssertionError("恢复不能重置错误计数"); };
         assertEquals(1, cli(forbidden, acceptance(), 12).resumeManagedTask(task), text());
     }

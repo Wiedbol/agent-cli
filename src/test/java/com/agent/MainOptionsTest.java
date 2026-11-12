@@ -1,6 +1,5 @@
 package com.agent;
 
-import com.agent.roles.ControllerRole;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -8,10 +7,24 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CLI 参数解析：默认值、单任务模式与各开关。 */
 class MainOptionsTest {
+    @Test void shouldParseFileApprovalWithoutEnablingCommandApproval() {
+        assertFalse(Main.Options.parse(new String[0]).autoApproveFiles());
+        for (String[] arguments : new String[][]{
+                {"--auto-approve-files"}, {"--task", "fix", "--auto-approve-files"},
+                {"--auto-approve-files", "--resume-task", "task-id"}}) {
+            var options = Main.Options.parse(arguments);
+            assertTrue(options.autoApproveFiles());
+            assertFalse(options.autoApprove());
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> Main.Options.parse(new String[]{"--auto-approve-files", "--yes"}));
+    }
+
     @Test void shouldParseFeedbackInspectionExplicitRevisionAndRegressionBindings() {
         var query = SkillCommands.parse(new String[]{"--skill-feedbacks"});
         org.junit.jupiter.api.Assertions.assertNotNull(query); assertEquals("FEEDBACKS", query.action().name());
@@ -43,12 +56,15 @@ class MainOptionsTest {
                     () -> SkillCommands.parse(new String[]{"--" + action + "-skill", "version"}));
         }
     }
-    @Test void shouldParseSkillLibraryOnlyForNewSkillTasks() {
-        String[] args = {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/control", "--skill-source", "E:/source"};
-        var options = Main.Options.parse(args);
-        assertEquals(Path.of("E:/control"), options.skillControl());
-        assertEquals(Path.of("E:/source"), options.skillSource());
-        assertNull(SkillCommands.parse(args));
+    @Test void shouldParseSkillLibraryForNewSkillTaskOrChat() {
+        for (String[] args : new String[][] {
+                {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/control", "--skill-source", "E:/source"},
+                {"--resume", "latest", "--skill-control", "E:/control", "--skill-source", "E:/source"}}) {
+            var options = Main.Options.parse(args);
+            assertEquals(Path.of("E:/control"), options.skillControl());
+            assertEquals(Path.of("E:/source"), options.skillSource());
+            assertNull(SkillCommands.parse(args));
+        }
     }
     @Test void shouldRejectMissingOrOverriddenSkillLibraryContext() {
         for (String[] args : new String[][] {
@@ -58,6 +74,9 @@ class MainOptionsTest {
                 {"--task", "fix", "--knowledge-mode", "skill", "--skill-source", "E:/s"},
                 {"--resume-task", "id", "--skill-control", "E:/c", "--skill-source", "E:/s"},
                 {"--tasks", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--local", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--export", "latest", "--skill-control", "E:/c", "--skill-source", "E:/s"},
+                {"--skill-control", "E:/c"},
                 {"--task", "fix", "--knowledge-mode", "skill", "--skill-control"},
                 {"--task", "fix", "--knowledge-mode", "skill", "--skill-control", "E:/c", "--skill-control", "E:/c", "--skill-source", "E:/s"}}) {
             org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(args));
@@ -135,6 +154,15 @@ class MainOptionsTest {
     }
 
     @Test
+    void shouldParseExperienceSharingAndRejectConflictingActions() {
+        assertEquals("id", Main.Options.parse(new String[]{"--share-experience", "id"}).shareExperience());
+        assertEquals("id", Main.Options.parse(new String[]{"--unshare-experience", "id"}).unshareExperience());
+        assertThrows(IllegalArgumentException.class, () -> Main.Options.parse(new String[]{"--share-experience"}));
+        assertThrows(IllegalArgumentException.class,
+                () -> Main.Options.parse(new String[]{"--share-experience", "id", "--unshare-experience", "id"}));
+    }
+
+    @Test
     void shouldRejectInvalidOrConflictingKnowledgeModeOptions() {
         for (String[] args : new String[][]{
                 {"--task", "fix", "--knowledge-mode"}, {"--task", "fix", "--knowledge-mode", ""},
@@ -184,7 +212,7 @@ class MainOptionsTest {
         assertFalse(options.local());
         assertFalse(options.upperCase());
         assertNull(options.root());
-        assertEquals(ControllerRole.DEFAULT_MAX_STEPS, options.maxSteps());
+        assertEquals(30, options.maxSteps());
     }
 
     @Test

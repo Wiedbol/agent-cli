@@ -73,7 +73,10 @@ class CodingAgentCliTaskResolutionTest {
 
     @Test void shouldAbandonUnknownTaskWithoutRollingBackOrClaimingSuccess() throws Exception {
         String task = unknownWrite();
-        assertEquals(1, cli(null, acceptance(), "abandon " + task + "\n").abandonTask(task, true), text());
+        var chat = new FakeLLMClient(List.of());
+        assertEquals(0, cli(chat, acceptance(), "/abandon-task " + task + "\nabandon " + task + "\nexit\n")
+                .runRepl(null, null, chat, true), text());
+        assertEquals(0, chat.callCount());
         assertEquals("fixed", Files.readString(source()));
         output.reset();
         assertEquals(0, cli(null, acceptance(), "").showTask(task));
@@ -92,8 +95,11 @@ class CodingAgentCliTaskResolutionTest {
         String task = unknownWrite();
         assertEquals(0, cli(null, acceptance(), "").showTask(task));
         String original = operationId();
-        assertEquals(1, cli(null, acceptance(), "retry " + task + " " + original + "\n")
-                .retryUncertainOperation(task, original, true), text());
+        var chat = new FakeLLMClient(List.of());
+        String operation = task + " " + original;
+        assertEquals(0, cli(chat, acceptance(), "/retry-operation " + operation + "\nretry " + operation + "\nexit\n")
+                .runRepl(null, null, chat, true), text());
+        assertEquals(0, chat.callCount());
         assertEquals("fixed", Files.readString(source()));
         assertTrue(text().contains("状态: Paused"), text());
         assertTrue(text().contains("RETRY"), text());

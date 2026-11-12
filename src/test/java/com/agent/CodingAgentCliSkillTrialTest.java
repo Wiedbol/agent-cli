@@ -43,6 +43,53 @@ class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
         assertEquals("dev-fixed", Files.readString(root.resolve(SOURCE)));
     }
 
+    @ParameterizedTest @ValueSource(strings = {"finish", "repeat", "executed-failure"})
+    void shouldRetireOnlyUnexecutedCommandRejectionsAfterVerifiedCompletion(String scenario) throws Exception {
+        prepare(GUIDE, 10);
+        boolean executedFailure = scenario.equals("executed-failure");
+        boolean finished = scenario.equals("finish");
+        var model = new FakeLLMClient(List.of(
+                calls(call("load", "load_skill", Map.of("id", candidate, "version", version))),
+                calls(call("read", "read_file", Map.of("path", SOURCE))),
+                calls(call("accept", "declare_skill", Map.of("id", candidate, "version", version,
+                        "decision", "ACCEPT", "reason", "已核对失败原因"))),
+                calls(call("edit", "write_file", Map.of("path", SOURCE, "content", "dev-fixed"))),
+                calls(call("first-command", "run_command", Map.of("command", executedFailure ? "mvn test" : "mvn -q test"))),
+                executedFailure ? calls(call("second-read", "read_file", Map.of("path", SOURCE)))
+                        : calls(call("second-command", "run_command", Map.of("command", "cat .repair-lab-workspace.json"))),
+                scenario.equals("repeat") ? calls(call("third-command", "run_command", Map.of("command", "mvn -q test")))
+                        : new LLMResponse("修复已完成，请独立验收", null, 1, 1)));
+        var commands = commands();
+        var executed = new ArrayList<String>();
+        CommandRunner runner = (dir, command, timeout) -> {
+            executed.add(command);
+            if (executedFailure && executed.size() == 2) {
+                return new com.agent.command.CommandResult(1, false, "实际命令失败", 1,
+                        com.agent.command.CommandResult.OutputCompleteness.COMPLETE);
+            }
+            return commands.run(dir, command, timeout);
+        };
+        var stream = new PrintStream(output, true, StandardCharsets.UTF_8);
+        var cli = new CodingAgentCli(root, model, true, 8, new BufferedReader(new StringReader("")), stream, stream, null, runner);
+        assertEquals(finished ? 0 : 1, cli.startSkillTrial(config(8)), text());
+        assertEquals(7, model.callCount());
+        assertEquals(java.util.Collections.nCopies(executedFailure ? 4 : 3, "mvn test"), executed);
+        var command = model.toolRequests().get(0).stream().filter(tool -> tool.name().equals("run_command")).findFirst().orElseThrow();
+        assertTrue(command.description().contains("「mvn test」") && command.description().contains("独立执行验收"));
+        assertFalse(command.description().contains("mvn -q"));
+        assertTrue(text().contains("final: PASSED"), text());
+        assertEquals(!finished, text().contains("同一核心错误持续三个决策轮次"), text());
+
+        var tasks = com.agent.task.TaskStore.readOnlyArchive(control.resolve("skill-trials").resolve(id("技能试用"))
+                .resolve("result-root"), root);
+        var task = tasks.list().get(0);
+        var failures = task.progress.decisions.stream().flatMap(decision -> decision.operations.stream())
+                .filter(operation -> "run_command".equals(operation.tool) && operation.status.name().equals("FAILED")).toList();
+        assertEquals(executedFailure ? 1 : finished ? 2 : 3, failures.size());
+        assertEquals(finished, task.progress.toolErrors.isEmpty());
+        assertTrue(failures.get(0).observation.contains(executedFailure ? "实际命令失败" : "请求未执行"));
+    }
+
     @Test void shouldStillPauseOnRepeatedKnowledgeDeclarationsWithChangingReasons() throws Exception {
         prepare();
         var responses = new ArrayList<LLMResponse>();
@@ -98,6 +145,9 @@ class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
         String trial = id("技能试用");
         assertTrue(model.requests().get(0).toString().contains("显式候选审阅"));
         assertTrue(model.requests().get(0).toString().contains("ACCEPT 或 REJECT"));
+        String selection = "{\"id\":\"" + candidate + "\",\"version\":\"" + version + "\"}";
+        assertTrue(model.requests().get(0).toString().contains("load_skill 参数: " + selection));
+        assertFalse(model.requests().get(0).toString().contains(candidate + "@" + version));
         assertFalse(model.requests().get(0).toString().contains("SKILL_GUIDE_PRIVATE_MARKER"));
         assertTrue(model.requests().get(1).toString().contains("SKILL_GUIDE_PRIVATE_MARKER"));
         assertFalse(model.requests().toString().contains("OTHER_CANDIDATE_SECRET"));
@@ -112,12 +162,17 @@ class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
         assertFalse(Files.exists(root.resolve(".agent/skills/candidates")));
     }
 
-    @ParameterizedTest @ValueSource(strings = {"skip", "reject", "duplicate", "wrong-id", "wrong-version", "undeclared"})
+    @ParameterizedTest @ValueSource(strings = {"skip", "reject", "duplicate", "wrong-id", "wrong-version", "wrong-joined-id", "undeclared"})
     void shouldKeepSelectionLoadingAndDeclarationSeparate(String choice) throws Exception {
         prepare();
         var responses = new ArrayList<LLMResponse>();
         if (!choice.equals("skip")) {
-            responses.add(calls(call("load", "load_skill", Map.of("id", choice.equals("wrong-id") ? otherCandidate : candidate,
+            String id = switch (choice) {
+                case "wrong-id" -> otherCandidate;
+                case "wrong-joined-id" -> candidate + "@" + version;
+                default -> candidate;
+            };
+            responses.add(calls(call("load", "load_skill", Map.of("id", id,
                     "version", choice.equals("wrong-version") ? "0".repeat(64) : version))));
         }
         var edits = new ArrayList<ToolCall>();
@@ -138,6 +193,9 @@ class CodingAgentCliSkillTrialTest extends SkillTrialFixture {
         assertTrue(text().contains("已加载: " + loaded), text());
         assertTrue(text().contains("声明: " + (choice.equals("reject") ? "REJECT" : "null")), text());
         if (!loaded) { assertFalse(model.requests().toString().contains("SKILL_GUIDE_PRIVATE_MARKER")); }
+        if (choice.equals("wrong-joined-id")) {
+            assertTrue(model.requests().toString().contains("请分别填写 id 和 version"));
+        }
         if (choice.equals("duplicate")) { assertTrue(text().contains("LOAD_DUPLICATE"), text()); }
         if (choice.startsWith("wrong")) { assertTrue(text().contains("LOAD_DENIED"), text()); }
     }

@@ -28,12 +28,13 @@ public final class SessionExporter {
         String sessionId = "latest".equalsIgnoreCase(id)
                 ? SessionStore.latest(dir).orElseThrow(() -> new IOException("没有任何会话可以导出"))
                 : id;
-        if (!SessionStore.exists(dir, sessionId)) {
-            throw new IOException("会话不存在: " + sessionId);
-        }
+        return toMarkdownForSession(dir, sessionId);
+    }
 
+    /** 按实际会话 ID 导出，允许聊天中选择一个名为 latest 的会话。 */
+    public static String toMarkdownForSession(Path dir, String sessionId) throws IOException {
         StringBuilder markdown = new StringBuilder("# 会话 " + sessionId + "\n\n");
-        for (Path shard : SessionStore.shards(dir, sessionId)) {
+        for (Path shard : SessionStore.storedSessionShards(dir, sessionId)) {
             for (String line : Files.readAllLines(shard, StandardCharsets.UTF_8)) {
                 if (line.isBlank()) {
                     continue;

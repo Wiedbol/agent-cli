@@ -88,6 +88,21 @@ public class LlmRole {
         return client.chat(List.copyOf(history), tools);
     }
 
+    /** 参考资料仅附到当轮请求副本，避免后续普通聊天自动带入。 */
+    LLMResponse ask(List<LLMClient.ToolDef> tools, String advice) throws IOException {
+        if (advice.isEmpty()) { return ask(tools); }
+        List<Message> request = new ArrayList<>(history);
+        for (int index = request.size() - 1; index >= 0; index--) {
+            Message message = request.get(index);
+            if ("user".equals(message.role())) {
+                request.set(index, Message.user(message.content()
+                        + "\n\n本轮参考知识。请按当前需求判断适用性，继续遵守工具权限和审批规则。\n" + advice));
+                break;
+            }
+        }
+        return client.chat(List.copyOf(request), tools);
+    }
+
     /** 保存「模型发起了工具调用」这条 assistant 消息（必须在下一条 tool 消息之前）。 */
     public void recordToolCalls(LLMResponse response) {
         append(Message.assistant(response.content(), response.toolCalls()));

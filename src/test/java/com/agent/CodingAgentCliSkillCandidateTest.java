@@ -69,12 +69,41 @@ class CodingAgentCliSkillCandidateTest {
         return id("技能批次");
     }
 
+    @Test void shouldMakeInactiveSkillCandidateFromShortExperienceIdInChat() throws Exception {
+        String sourceId = experience();
+        String shortId = sourceId.substring(0, 8);
+        var model = new FakeLLMClient(List.of(new LLMResponse(GUIDE, null, 7, 11)));
+        String commands = "/help\n/make-skill\n/make-skill invalid\n"
+                + "/make-skill " + shortId + "," + sourceId + "\n"
+                + "/make-skill " + shortId + "\nexit\n";
+        output.reset();
+
+        assertEquals(0, cli(model, commands).runRepl(null, null, model, false), text());
+
+        String candidate = id("技能候选");
+        assertEquals(1, model.callCount());
+        assertTrue(model.requests().get(0).toString().contains(sourceId));
+        assertTrue(text().contains("/make-skill <经验ID[,经验ID…]>"), text());
+        assertTrue(text().contains("需要一至十条不重复的来源经验"), text());
+        assertTrue(text().contains("累计请求: 1/1") && text().contains("启用: false"), text());
+        assertTrue(Files.isRegularFile(root.resolve(".agent/skills/candidates/" + candidate + ".json")));
+        try (var batches = Files.list(root.resolve(".agent/skills/batches"))) {
+            assertEquals(1, batches.count());
+        }
+        assertFalse(Files.exists(root.resolve(".agent/skills/versions")));
+    }
+
     @Test void shouldGenerateSourcedInactiveCandidateAndInspectWithoutKeyAfterRestart() throws Exception {
         String experience = experience();
         String batch = batch(2);
         var model = new FakeLLMClient(List.of(new LLMResponse(GUIDE, null, 7, 11)));
         assertEquals(0, cli(model, "").generateSkillCandidate(batch, List.of(experience), null, null), text());
         String candidate = id("技能候选");
+        output.reset();
+        assertEquals(0, cli(null, "").listSkillCandidates(), text());
+        String candidateList = text().replace("\r\n", "\n");
+        assertTrue(candidateList.startsWith("技能候选: " + candidate + "\n  技能: "), text());
+        assertTrue(candidateList.contains("\n  来源经验: " + experience + "\n"), text());
         output.reset();
         assertEquals(0, cli(null, "").showSkillCandidate(candidate), text());
         assertTrue(text().contains("启用: false"), text());
@@ -86,6 +115,9 @@ class CodingAgentCliSkillCandidateTest {
         assertTrue(text().contains("累计请求: 1/2"), text());
         assertTrue(text().contains("已知输入 token: 7"), text());
         assertTrue(text().contains("已知输出 token: 11"), text());
+        output.reset();
+        assertEquals(0, cli(null, "").listSkillBatches(), text());
+        assertTrue(text().replace("\r\n", "\n").startsWith("技能批次: " + batch + "\n  累计请求: 1/2\n"), text());
         assertEquals(1, model.callCount());
         assertTrue(model.requests().get(0).toString().contains(experience));
         assertTrue(model.toolRequests().get(0).isEmpty());

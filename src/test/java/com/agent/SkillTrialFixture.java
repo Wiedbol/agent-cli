@@ -6,6 +6,8 @@ import com.agent.llm.*;
 import com.agent.skill.SkillTrials;
 import com.agent.task.WorkspaceSnapshot;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.*;
@@ -18,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SkillTrialFixture {
     @TempDir Path base;
+    private String originalHome;
     Path root, control, sourceArchive, catalog;
     String candidate, version, otherCandidate, batch;
     final ObjectMapper json = new ObjectMapper();
@@ -28,6 +31,16 @@ class SkillTrialFixture {
             {"title":"边界诊断","conditions":"业务边界失败","exclusions":"不适用于语法问题",
              "diagnosis":"SKILL_GUIDE_PRIVATE_MARKER","repair":"检查计算数量与业务边界","verification":"运行冻结验收"}
             """;
+
+    @BeforeEach void isolateUserKnowledge() throws IOException {
+        originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", Files.createDirectory(base.resolve("user-home")).toString());
+    }
+
+    @AfterEach void restoreUserKnowledge() {
+        if (originalHome != null) { System.setProperty("user.home", originalHome); }
+    }
+
     String text() { return output.toString(StandardCharsets.UTF_8); }
     String id(String label) {
         var match = Pattern.compile(label + ": ([0-9a-f-]{36})").matcher(text());
@@ -73,7 +86,8 @@ class SkillTrialFixture {
         }
     }
     void prepare() throws Exception { prepare(GUIDE); }
-    void prepare(String guide) throws Exception {
+    void prepare(String guide) throws Exception { prepare(guide, 8); }
+    void prepare(String guide, int batchLimit) throws Exception {
         root = Files.createDirectory(base.resolve("workspace"));
         control = Files.createDirectory(base.resolve("control"));
         catalog = base.resolve("catalog.json");
@@ -92,7 +106,7 @@ class SkillTrialFixture {
         assertEquals(0, cli(advice, "save " + task + "\n").extractExperience(task, true), text());
         String experience = id("已保存经验");
         output.reset();
-        assertEquals(0, cli(null, "").startSkillBatch(8), text());
+        assertEquals(0, cli(null, "").startSkillBatch(batchLimit), text());
         batch = id("技能批次");
         var generator = new FakeLLMClient(List.of(new LLMResponse(guide, null, 1, 1),
                 new LLMResponse(guide.replace("SKILL_GUIDE_PRIVATE_MARKER", "OTHER_CANDIDATE_SECRET"), null, 1, 1)));

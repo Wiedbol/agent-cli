@@ -1,12 +1,15 @@
 package com.agent.roles;
 
 import com.agent.tool.Tool;
+import com.agent.tool.RunCommandTool;
 import com.agent.tool.ToolRequest;
 import com.agent.tool.ToolResult;
+import com.agent.tool.WriteFileTool;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * 角色五：<b>执行员</b>。
@@ -53,6 +56,14 @@ public class ExecutorRole {
     /** 执行一次工具调用，永不抛异常。 */
     public ToolResult execute(Tool tool, JsonNode arguments) {
         return truncate(attempt(tool, () -> tool.execute(new ToolRequest(root, arguments))));
+    }
+
+    ToolResult createNew(WriteFileTool tool, JsonNode arguments) {
+        return truncate(attempt(tool, () -> tool.createNew(new ToolRequest(root, arguments))));
+    }
+
+    ToolResult runProjectCommand(RunCommandTool tool, JsonNode arguments, List<String> invocation) {
+        return truncate(attempt(tool, () -> tool.runApproved(new ToolRequest(root, arguments), invocation)));
     }
 
     /** Diff 不使用模型结果长度限制，避免用户批准没有完整看到的变更。 */

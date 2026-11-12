@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
@@ -260,12 +261,43 @@ public class SessionStore implements SessionRecorder {
      * @return 新会话名
      */
     public String startNewSession() throws IOException {
-        this.sessionId = uniqueName(dir, SessionPaths.timestampName());
-        this.part = 1;
-        this.resumed = false;
-        this.currentFile = SessionPaths.shard(dir, sessionId, 1);
-        writeMeta(false);
+        var next = new SessionStore(dir, uniqueName(dir, SessionPaths.timestampName()), false, 1, maxBytes, warn);
+        activate(next);
         return sessionId;
+    }
+
+    /** 先读取目标记录，再切换共享记录器，使历史和后续写入使用同一会话。 */
+    public LoadResult switchTo(String id) throws IOException {
+        if (strict || id.startsWith("task-")) { throw new IOException("管理任务会话可导出；聊天切换需要普通会话"); }
+        List<Path> shards = storedSessionShards(dir, id);
+        LoadResult history = load(shards);
+        int lastPart = partOf(shards.get(shards.size() - 1).getFileName().toString());
+        activate(new SessionStore(dir, id, true, lastPart, maxBytes, warn));
+        return history;
+    }
+
+    private void activate(SessionStore next) throws IOException {
+        next.strict = true;
+        try { next.writeMeta(next.resumed); }
+        catch (java.io.UncheckedIOException failure) { throw failure.getCause(); }
+        this.sessionId = next.sessionId;
+        this.part = next.part;
+        this.resumed = next.resumed;
+        this.currentFile = next.currentFile;
+    }
+
+    static List<Path> storedSessionShards(Path dir, String id) throws IOException {
+        List<Path> shards = shards(dir, id);
+        if (shards.isEmpty() || !shards.get(0).equals(SessionPaths.shard(dir, id, 1))) {
+            throw new IOException("会话不存在或记录不可用: " + id);
+        }
+        for (Path shard : shards) {
+            int number = partOf(shard.getFileName().toString());
+            if (!shard.equals(SessionPaths.shard(dir, id, number)) || !Files.isRegularFile(shard, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("会话分片不可用: " + shard.getFileName());
+            }
+        }
+        return shards;
     }
 
     // ---- 读回 ----
@@ -281,9 +313,13 @@ public class SessionStore implements SessionRecorder {
      * <p>损坏行（半截 JSON、被外部编辑破坏）会被跳过并计数，而不是让整个恢复失败。
      */
     public static LoadResult load(Path dir, String id) throws IOException {
+        return load(shards(dir, id));
+    }
+
+    private static LoadResult load(List<Path> shards) throws IOException {
         List<Message> messages = new ArrayList<>();
         int skipped = 0;
-        for (Path shard : shards(dir, id)) {
+        for (Path shard : shards) {
             for (String line : Files.readAllLines(shard, StandardCharsets.UTF_8)) {
                 if (line.isBlank()) {
                     continue;
